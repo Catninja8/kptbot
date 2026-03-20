@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import os
 import json
 import datetime
@@ -36,28 +37,43 @@ def add_log(action, details, guild_id=None):
     logs['logs'] = logs['logs'][:200]
     save_json('logs.json', logs)
 
-# ---------- Intents & Bot ----------
+# ---------- Bot Setup ----------
 intents = discord.Intents.all()
 
 def get_prefix(bot, message):
     settings = load_json('settings.json')
     return settings.get('prefix', '!')
 
-bot = commands.Bot(command_prefix=get_prefix, intents=intents)
+class KPTBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix=get_prefix, intents=intents)
+
+    async def setup_hook(self):
+        # Sync slash commands globally
+        await self.tree.sync()
+        print('✅ Slash commands synced!')
+
+    async def on_ready(self):
+        print(f'✅ Logged in as {self.user}')
+        add_log('BOT_START', f'{self.user} came online')
+        await self.change_presence(activity=discord.Activity(
+            type=discord.ActivityType.watching, name="your server | /help"
+        ))
+
+bot = KPTBot()
+
+# ---------- Helper: shared response embed ----------
+def mod_embed(title, color, **fields):
+    embed = discord.Embed(title=title, color=color, timestamp=datetime.datetime.utcnow())
+    for k, v in fields.items():
+        embed.add_field(name=k, value=v)
+    return embed
 
 # ---------- Events ----------
-@bot.event
-async def on_ready():
-    print(f'✅ Logged in as {bot.user}')
-    add_log('BOT_START', f'{bot.user} came online')
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="your server 👀"))
-
 @bot.event
 async def on_member_join(member):
     settings = load_json('settings.json')
     guild = member.guild
-
-    # Welcome message
     if settings.get('welcome_enabled'):
         ch_id = settings.get('welcome_channel')
         channel = guild.get_channel(int(ch_id)) if ch_id else None
@@ -68,8 +84,6 @@ async def on_member_join(member):
             embed.set_author(name=f'Welcome to {guild.name}!', icon_url=member.display_avatar.url)
             embed.set_thumbnail(url=member.display_avatar.url)
             await channel.send(embed=embed)
-
-    # Auto role
     if settings.get('autorole_enabled'):
         role_id = settings.get('autorole_id')
         if role_id:
@@ -77,7 +91,6 @@ async def on_member_join(member):
             if role:
                 await member.add_roles(role)
                 add_log('AUTOROLE', f'Gave {role.name} to {member}', guild.id)
-
     add_log('MEMBER_JOIN', f'{member} joined {guild.name}', guild.id)
 
 @bot.event
@@ -98,10 +111,7 @@ async def on_member_remove(member):
 async def on_message(message):
     if message.author.bot:
         return
-
     settings = load_json('settings.json')
-
-    # Custom commands
     custom_cmds = load_json('custom_commands.json')
     prefix = settings.get('prefix', '!')
     if message.content.startswith(prefix):
@@ -109,40 +119,29 @@ async def on_message(message):
         if cmd_name in custom_cmds:
             await message.channel.send(custom_cmds[cmd_name])
             return
-
-    # Auto-mod
     if settings.get('automod_enabled'):
         content = message.content.lower()
         deleted = False
-
-        # Bad words
         if settings.get('automod_badwords'):
-            bad_words = settings.get('bad_words', [])
-            if any(w in content for w in bad_words):
+            if any(w in content for w in settings.get('bad_words', [])):
                 await message.delete()
                 await message.channel.send(f'⚠️ {message.author.mention} watch your language!', delete_after=5)
                 add_log('AUTOMOD_WORD', f'Deleted message from {message.author}', message.guild.id)
                 deleted = True
-
-        # Caps filter
         if not deleted and settings.get('automod_caps'):
             if len(message.content) > 8 and sum(1 for c in message.content if c.isupper()) / len(message.content) > 0.7:
                 await message.delete()
-                await message.channel.send(f'⚠️ {message.author.mention} please don\'t use excessive caps!', delete_after=5)
-                add_log('AUTOMOD_CAPS', f'Deleted caps message from {message.author}', message.guild.id)
+                await message.channel.send(f'⚠️ {message.author.mention} no excessive caps!', delete_after=5)
+                add_log('AUTOMOD_CAPS', f'Deleted caps from {message.author}', message.guild.id)
                 deleted = True
-
-        # Link filter
         if not deleted and settings.get('automod_links'):
             if 'http://' in content or 'https://' in content or 'discord.gg/' in content:
                 await message.delete()
                 await message.channel.send(f'⚠️ {message.author.mention} links are not allowed!', delete_after=5)
                 add_log('AUTOMOD_LINK', f'Deleted link from {message.author}', message.guild.id)
                 deleted = True
-
         if deleted:
             return
-
     await bot.process_commands(message)
 
 @bot.event
@@ -156,7 +155,37 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.CommandNotFound):
         pass
 
-# ---------- Basic ----------
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if not interaction.data or 'custom_id' not in interaction.data:
+        return
+    custom_id = interaction.data['custom_id']
+    if custom_id.startswith('close_'):
+        if not interaction.user.guild_permissions.manage_channels:
+            await interaction.response.send_message('❌ Only staff can close tickets.', ephemeral=True)
+            return
+        embed = discord.Embed(description='🔒 Ticket closing in 5 seconds...', color=0xFF4466)
+        await interaction.response.send_message(embed=embed)
+        tickets = load_json('tickets.json')
+        for t in tickets.get('tickets', []):
+            if t.get('channel_id') == str(interaction.channel.id):
+                t['status'] = 'closed'
+        save_json('tickets.json', tickets)
+        add_log('TICKET_CLOSE', f'{interaction.user} closed {interaction.channel.name}', interaction.guild.id)
+        await asyncio.sleep(5)
+        await interaction.channel.delete()
+    elif custom_id.startswith('claim_'):
+        if not interaction.user.guild_permissions.manage_channels:
+            await interaction.response.send_message('❌ Only staff can claim tickets.', ephemeral=True)
+            return
+        embed = discord.Embed(description=f'✋ Claimed by {interaction.user.mention}', color=0x00FF88)
+        await interaction.response.send_message(embed=embed)
+        add_log('TICKET_CLAIM', f'{interaction.user} claimed {interaction.channel.name}', interaction.guild.id)
+
+# ============================================================
+# PREFIX COMMANDS
+# ============================================================
+
 @bot.command()
 async def ping(ctx):
     await ctx.send(f'🏓 Pong! `{round(bot.latency * 1000)}ms`')
@@ -167,7 +196,6 @@ async def info(ctx):
     embed.add_field(name='Servers', value=len(bot.guilds))
     embed.add_field(name='Users', value=sum(g.member_count for g in bot.guilds))
     embed.add_field(name='Ping', value=f'{round(bot.latency * 1000)}ms')
-    embed.set_footer(text='KPT_BOT Dashboard • kptbot')
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -182,27 +210,29 @@ async def serverinfo(ctx):
         embed.set_thumbnail(url=g.icon.url)
     await ctx.send(embed=embed)
 
-# ---------- Moderation ----------
+@bot.command()
+async def help(ctx):
+    prefix = get_prefix(bot, ctx.message)
+    embed = discord.Embed(title='📖 KPT_BOT Commands', description=f'Prefix: `{prefix}` — Also supports `/` slash commands!', color=0x5865F2)
+    embed.add_field(name='🛡️ Moderation', value=f'`{prefix}kick` `{prefix}ban` `{prefix}mute` `{prefix}unmute` `{prefix}warn` `{prefix}warnings` `{prefix}clearwarns` `{prefix}purge`', inline=False)
+    embed.add_field(name='🎫 Tickets', value=f'`{prefix}ticket` `{prefix}closeticket`', inline=False)
+    embed.add_field(name='🎉 Giveaways', value=f'`{prefix}giveaway` `{prefix}reroll`', inline=False)
+    embed.add_field(name='📢 Other', value=f'`{prefix}announce` `{prefix}giverole` `{prefix}removerole` `{prefix}addcmd` `{prefix}delcmd` `{prefix}listcmds` `{prefix}serverinfo` `{prefix}ping` `{prefix}info`', inline=False)
+    embed.set_footer(text='Tip: Type / to use slash commands with autocomplete!')
+    await ctx.send(embed=embed)
+
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason='No reason provided'):
     await member.kick(reason=reason)
-    embed = discord.Embed(title='👢 Member Kicked', color=0xFF4466)
-    embed.add_field(name='User', value=str(member))
-    embed.add_field(name='Reason', value=reason)
-    embed.add_field(name='Moderator', value=str(ctx.author))
-    await ctx.send(embed=embed)
+    await ctx.send(embed=mod_embed('👢 Member Kicked', 0xFF4466, User=str(member), Reason=reason, Moderator=str(ctx.author)))
     add_log('KICK', f'{ctx.author} kicked {member} | {reason}', ctx.guild.id)
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason='No reason provided'):
     await member.ban(reason=reason)
-    embed = discord.Embed(title='🔨 Member Banned', color=0xFF0000)
-    embed.add_field(name='User', value=str(member))
-    embed.add_field(name='Reason', value=reason)
-    embed.add_field(name='Moderator', value=str(ctx.author))
-    await ctx.send(embed=embed)
+    await ctx.send(embed=mod_embed('🔨 Member Banned', 0xFF0000, User=str(member), Reason=reason, Moderator=str(ctx.author)))
     add_log('BAN', f'{ctx.author} banned {member} | {reason}', ctx.guild.id)
 
 @bot.command()
@@ -221,18 +251,14 @@ async def unban(ctx, *, user_name):
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, minutes: int = 10, *, reason='No reason provided'):
     await member.timeout(datetime.timedelta(minutes=minutes), reason=reason)
-    embed = discord.Embed(title='🔇 Member Muted', color=0xFFCC00)
-    embed.add_field(name='User', value=str(member))
-    embed.add_field(name='Duration', value=f'{minutes} minutes')
-    embed.add_field(name='Reason', value=reason)
-    await ctx.send(embed=embed)
+    await ctx.send(embed=mod_embed('🔇 Member Muted', 0xFFCC00, User=str(member), Duration=f'{minutes} minutes', Reason=reason))
     add_log('MUTE', f'{ctx.author} muted {member} for {minutes}m | {reason}', ctx.guild.id)
 
 @bot.command()
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member):
     await member.timeout(None)
-    await ctx.send(f'🔊 **{member}** has been unmuted.')
+    await ctx.send(f'🔊 **{member}** unmuted.')
     add_log('UNMUTE', f'{ctx.author} unmuted {member}', ctx.guild.id)
 
 @bot.command()
@@ -244,11 +270,7 @@ async def warn(ctx, member: discord.Member, *, reason='No reason provided'):
         warns[uid] = []
     warns[uid].append({'reason': reason, 'by': str(ctx.author), 'time': datetime.datetime.utcnow().isoformat()})
     save_json('warns.json', warns)
-    embed = discord.Embed(title='⚠️ Member Warned', color=0xFF9900)
-    embed.add_field(name='User', value=str(member))
-    embed.add_field(name='Reason', value=reason)
-    embed.add_field(name='Total Warns', value=len(warns[uid]))
-    await ctx.send(embed=embed)
+    await ctx.send(embed=mod_embed('⚠️ Member Warned', 0xFF9900, User=str(member), Reason=reason, **{'Total Warns': len(warns[uid])}))
     add_log('WARN', f'{ctx.author} warned {member} | {reason}', ctx.guild.id)
 
 @bot.command()
@@ -277,7 +299,6 @@ async def purge(ctx, amount: int):
     await ctx.send(f'🧹 Deleted {amount} messages.', delete_after=3)
     add_log('PURGE', f'{ctx.author} purged {amount} messages in #{ctx.channel.name}', ctx.guild.id)
 
-# ---------- Roles ----------
 @bot.command()
 @commands.has_permissions(manage_roles=True)
 async def giverole(ctx, member: discord.Member, *, role_name: str):
@@ -298,7 +319,6 @@ async def removerole(ctx, member: discord.Member, *, role_name: str):
     await ctx.send(f'✅ Removed **{role.name}** from **{member}**.')
     add_log('ROLE_REMOVE', f'{ctx.author} removed {role.name} from {member}', ctx.guild.id)
 
-# ---------- Announcements ----------
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def announce(ctx, channel: discord.TextChannel, *, message: str):
@@ -306,43 +326,29 @@ async def announce(ctx, channel: discord.TextChannel, *, message: str):
     embed.set_author(name='📢 Announcement', icon_url=ctx.guild.icon.url if ctx.guild.icon else None)
     embed.set_footer(text=f'Announced by {ctx.author}')
     await channel.send(embed=embed)
-    await ctx.send(f'✅ Announcement sent to {channel.mention}')
+    await ctx.send(f'✅ Sent to {channel.mention}')
     add_log('ANNOUNCE', f'{ctx.author} announced in #{channel.name}', ctx.guild.id)
 
-# ---------- Giveaways ----------
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def giveaway(ctx, minutes: int, winners: int, *, prize: str):
     end_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
-    embed = discord.Embed(
-        title='🎉 GIVEAWAY 🎉',
-        description=f'**Prize:** {prize}\n\n**Winners:** {winners}\n**Ends:** <t:{int(end_time.timestamp())}:R>\n\nReact with 🎉 to enter!',
-        color=0x00FF88,
-        timestamp=end_time
-    )
-    embed.set_footer(text=f'Ends at • Hosted by {ctx.author}')
+    embed = discord.Embed(title='🎉 GIVEAWAY 🎉', description=f'**Prize:** {prize}\n**Winners:** {winners}\n**Ends:** <t:{int(end_time.timestamp())}:R>\n\nReact with 🎉 to enter!', color=0x00FF88, timestamp=end_time)
+    embed.set_footer(text=f'Hosted by {ctx.author}')
     msg = await ctx.send(embed=embed)
     await msg.add_reaction('🎉')
     add_log('GIVEAWAY_START', f'{ctx.author} started giveaway: {prize} ({winners} winners, {minutes}m)', ctx.guild.id)
-
     await asyncio.sleep(minutes * 60)
-
     msg = await ctx.channel.fetch_message(msg.id)
     reaction = discord.utils.get(msg.reactions, emoji='🎉')
     users = [u async for u in reaction.users() if not u.bot]
-
     if not users:
-        await ctx.send('🎉 Giveaway ended but no one entered!')
+        await ctx.send('🎉 Giveaway ended but nobody entered!')
         return
-
-    actual_winners = min(winners, len(users))
-    winner_list = random.sample(users, actual_winners)
+    winner_list = random.sample(users, min(winners, len(users)))
     winner_mentions = ', '.join(w.mention for w in winner_list)
-
-    embed2 = discord.Embed(title='🎉 Giveaway Ended!', description=f'**Prize:** {prize}\n**Winner(s):** {winner_mentions}', color=0x00FF88)
-    await ctx.send(embed=embed2)
-    await ctx.send(f'Congratulations {winner_mentions}! You won **{prize}**! 🎉')
-    add_log('GIVEAWAY_END', f'Giveaway ended: {prize} | Winners: {[str(w) for w in winner_list]}', ctx.guild.id)
+    await ctx.send(embed=discord.Embed(title='🎉 Giveaway Ended!', description=f'**Prize:** {prize}\n**Winner(s):** {winner_mentions}', color=0x00FF88))
+    add_log('GIVEAWAY_END', f'Giveaway: {prize} | Winners: {[str(w) for w in winner_list]}', ctx.guild.id)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -351,120 +357,20 @@ async def reroll(ctx, message_id: int, winners: int = 1):
         msg = await ctx.channel.fetch_message(message_id)
         reaction = discord.utils.get(msg.reactions, emoji='🎉')
         users = [u async for u in reaction.users() if not u.bot]
-        if not users:
-            return await ctx.send('❌ No entries found.')
         winner_list = random.sample(users, min(winners, len(users)))
-        winner_mentions = ', '.join(w.mention for w in winner_list)
-        await ctx.send(f'🎉 New winner(s): {winner_mentions}!')
+        await ctx.send(f'🎉 New winner(s): {", ".join(w.mention for w in winner_list)}!')
     except:
         await ctx.send('❌ Could not find that message.')
 
-# ---------- Tickets ----------
-ticket_topics = ['General Support', 'Bug Report', 'Ban Appeal', 'Partnership', 'Purchase Issue', 'Other']
-
 @bot.command()
 async def ticket(ctx, *, reason='General Support'):
-    guild = ctx.guild
-    settings = load_json('settings.json')
-    tickets = load_json('tickets.json')
-    if 'count' not in tickets:
-        tickets['count'] = 0
-    tickets['count'] += 1
-    ticket_num = tickets['count']
-
-    # Find matching topic for channel name
-    topic_slug = reason.lower().replace(' ', '-')[:20]
-    channel_name = f'ticket-{ticket_num:04d}-{topic_slug}'
-
-    category_id = settings.get('ticket_category')
-    category = guild.get_channel(int(category_id)) if category_id else None
-
-    # Support role
-    support_role_id = settings.get('ticket_support_role')
-    support_role = guild.get_role(int(support_role_id)) if support_role_id else None
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        ctx.author: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
-        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
-    }
-    if support_role:
-        overwrites[support_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-    for role in guild.roles:
-        if role.permissions.administrator:
-            overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
-    channel = await guild.create_text_channel(channel_name, overwrites=overwrites, category=category, topic=f'Ticket #{ticket_num:04d} | {ctx.author} | {reason}')
-
-    if 'tickets' not in tickets:
-        tickets['tickets'] = []
-    tickets['tickets'].insert(0, {
-        'id': ticket_num,
-        'user': str(ctx.author),
-        'user_id': str(ctx.author.id),
-        'reason': reason,
-        'channel': channel_name,
-        'channel_id': str(channel.id),
-        'status': 'open',
-        'time': datetime.datetime.utcnow().isoformat()
-    })
-    save_json('tickets.json', tickets)
-
-    # Ticket panel embed (Ticket Tool style)
-    embed = discord.Embed(
-        title=f'🎫 Ticket #{ticket_num:04d}',
-        description=f'**Topic:** {reason}\n**Opened by:** {ctx.author.mention}\n\nSupport will be with you shortly! Please describe your issue in detail.\n\n> Use the buttons below to manage this ticket.',
-        color=0x5865F2,
-        timestamp=datetime.datetime.utcnow()
-    )
-    embed.set_footer(text='KPT_BOT Ticket System')
-
-    view = discord.ui.View()
-    close_btn = discord.ui.Button(label='🔒 Close Ticket', style=discord.ButtonStyle.danger, custom_id=f'close_{channel.id}')
-    claim_btn = discord.ui.Button(label='✋ Claim', style=discord.ButtonStyle.secondary, custom_id=f'claim_{channel.id}')
-    view.add_item(close_btn)
-    view.add_item(claim_btn)
-
-    await channel.send(f'{ctx.author.mention}{" " + support_role.mention if support_role else ""}', embed=embed, view=view)
-
-    confirm = discord.Embed(description=f'✅ Your ticket has been created: {channel.mention}', color=0x00FF88)
-    await ctx.send(embed=confirm, delete_after=10)
-    add_log('TICKET_OPEN', f'{ctx.author} opened ticket #{ticket_num:04d}: {reason}', guild.id)
-
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if not interaction.data or 'custom_id' not in interaction.data:
-        return
-    custom_id = interaction.data['custom_id']
-
-    if custom_id.startswith('close_'):
-        if not interaction.user.guild_permissions.manage_channels and str(interaction.user.id) not in interaction.channel.topic:
-            await interaction.response.send_message('❌ Only the ticket owner or staff can close this.', ephemeral=True)
-            return
-        embed = discord.Embed(description='🔒 Ticket closing in 5 seconds...', color=0xFF4466)
-        await interaction.response.send_message(embed=embed)
-        tickets = load_json('tickets.json')
-        for t in tickets.get('tickets', []):
-            if t.get('channel_id') == str(interaction.channel.id):
-                t['status'] = 'closed'
-        save_json('tickets.json', tickets)
-        add_log('TICKET_CLOSE', f'{interaction.user} closed ticket {interaction.channel.name}', interaction.guild.id)
-        await asyncio.sleep(5)
-        await interaction.channel.delete()
-
-    elif custom_id.startswith('claim_'):
-        if not interaction.user.guild_permissions.manage_channels:
-            await interaction.response.send_message('❌ Only staff can claim tickets.', ephemeral=True)
-            return
-        embed = discord.Embed(description=f'✋ Ticket claimed by {interaction.user.mention}', color=0x00FF88)
-        await interaction.response.send_message(embed=embed)
-        add_log('TICKET_CLAIM', f'{interaction.user} claimed {interaction.channel.name}', interaction.guild.id)
+    await _open_ticket(ctx.guild, ctx.author, ctx.channel, reason)
 
 @bot.command()
 async def closeticket(ctx):
     if 'ticket-' not in ctx.channel.name:
         return await ctx.send('❌ This is not a ticket channel.')
-    await ctx.send('🔒 Closing ticket in 5 seconds...')
+    await ctx.send('🔒 Closing in 5 seconds...')
     tickets = load_json('tickets.json')
     for t in tickets.get('tickets', []):
         if t.get('channel_id') == str(ctx.channel.id):
@@ -474,7 +380,6 @@ async def closeticket(ctx):
     await asyncio.sleep(5)
     await ctx.channel.delete()
 
-# ---------- Custom Commands ----------
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def addcmd(ctx, name: str, *, response: str):
@@ -491,7 +396,7 @@ async def delcmd(ctx, name: str):
     if name.lower() in cmds:
         del cmds[name.lower()]
         save_json('custom_commands.json', cmds)
-        await ctx.send(f'✅ Deleted custom command `{name}`.')
+        await ctx.send(f'✅ Deleted `{name}`.')
     else:
         await ctx.send(f'❌ Command `{name}` not found.')
 
@@ -506,7 +411,6 @@ async def listcmds(ctx):
         embed.add_field(name=f'`{prefix}{name}`', value=resp[:50], inline=False)
     await ctx.send(embed=embed)
 
-# ---------- Settings ----------
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setprefix(ctx, prefix: str):
@@ -515,6 +419,244 @@ async def setprefix(ctx, prefix: str):
     save_json('settings.json', settings)
     await ctx.send(f'✅ Prefix changed to `{prefix}`')
     add_log('SETTINGS', f'{ctx.author} changed prefix to {prefix}', ctx.guild.id)
+
+# ============================================================
+# SLASH COMMANDS
+# ============================================================
+
+@bot.tree.command(name='ping', description='Check the bot\'s latency')
+async def slash_ping(interaction: discord.Interaction):
+    await interaction.response.send_message(f'🏓 Pong! `{round(bot.latency * 1000)}ms`')
+
+@bot.tree.command(name='info', description='Show bot information')
+async def slash_info(interaction: discord.Interaction):
+    embed = discord.Embed(title='KPT_BOT Info', color=0x5865F2)
+    embed.add_field(name='Servers', value=len(bot.guilds))
+    embed.add_field(name='Users', value=sum(g.member_count for g in bot.guilds))
+    embed.add_field(name='Ping', value=f'{round(bot.latency * 1000)}ms')
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name='serverinfo', description='Show server information')
+async def slash_serverinfo(interaction: discord.Interaction):
+    g = interaction.guild
+    embed = discord.Embed(title=g.name, color=0x00d4ff)
+    embed.add_field(name='Members', value=g.member_count)
+    embed.add_field(name='Channels', value=len(g.channels))
+    embed.add_field(name='Roles', value=len(g.roles))
+    embed.add_field(name='Created', value=g.created_at.strftime('%b %d, %Y'))
+    if g.icon:
+        embed.set_thumbnail(url=g.icon.url)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name='help', description='Show all KPT_BOT commands')
+async def slash_help(interaction: discord.Interaction):
+    embed = discord.Embed(title='📖 KPT_BOT Commands', description='Use `/` for slash commands or `!` for prefix commands', color=0x5865F2)
+    embed.add_field(name='🛡️ Moderation', value='`/kick` `/ban` `/mute` `/unmute` `/warn` `/warnings` `/purge`', inline=False)
+    embed.add_field(name='🎫 Tickets', value='`/ticket` `/closeticket`', inline=False)
+    embed.add_field(name='🎉 Giveaways', value='`/giveaway` `/reroll`', inline=False)
+    embed.add_field(name='📢 Other', value='`/announce` `/giverole` `/removerole` `/serverinfo` `/ping` `/info`', inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name='kick', description='Kick a member from the server')
+@app_commands.describe(member='The member to kick', reason='Reason for the kick')
+async def slash_kick(interaction: discord.Interaction, member: discord.Member, reason: str = 'No reason provided'):
+    if not interaction.user.guild_permissions.kick_members:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await member.kick(reason=reason)
+    await interaction.response.send_message(embed=mod_embed('👢 Member Kicked', 0xFF4466, User=str(member), Reason=reason, Moderator=str(interaction.user)))
+    add_log('KICK', f'{interaction.user} kicked {member} | {reason}', interaction.guild.id)
+
+@bot.tree.command(name='ban', description='Ban a member from the server')
+@app_commands.describe(member='The member to ban', reason='Reason for the ban')
+async def slash_ban(interaction: discord.Interaction, member: discord.Member, reason: str = 'No reason provided'):
+    if not interaction.user.guild_permissions.ban_members:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await member.ban(reason=reason)
+    await interaction.response.send_message(embed=mod_embed('🔨 Member Banned', 0xFF0000, User=str(member), Reason=reason, Moderator=str(interaction.user)))
+    add_log('BAN', f'{interaction.user} banned {member} | {reason}', interaction.guild.id)
+
+@bot.tree.command(name='mute', description='Timeout (mute) a member')
+@app_commands.describe(member='The member to mute', minutes='Duration in minutes', reason='Reason')
+async def slash_mute(interaction: discord.Interaction, member: discord.Member, minutes: int = 10, reason: str = 'No reason provided'):
+    if not interaction.user.guild_permissions.moderate_members:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await member.timeout(datetime.timedelta(minutes=minutes), reason=reason)
+    await interaction.response.send_message(embed=mod_embed('🔇 Member Muted', 0xFFCC00, User=str(member), Duration=f'{minutes} minutes', Reason=reason))
+    add_log('MUTE', f'{interaction.user} muted {member} for {minutes}m | {reason}', interaction.guild.id)
+
+@bot.tree.command(name='unmute', description='Remove a timeout from a member')
+@app_commands.describe(member='The member to unmute')
+async def slash_unmute(interaction: discord.Interaction, member: discord.Member):
+    if not interaction.user.guild_permissions.moderate_members:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await member.timeout(None)
+    await interaction.response.send_message(f'🔊 **{member}** has been unmuted.')
+    add_log('UNMUTE', f'{interaction.user} unmuted {member}', interaction.guild.id)
+
+@bot.tree.command(name='warn', description='Warn a member')
+@app_commands.describe(member='The member to warn', reason='Reason for the warning')
+async def slash_warn(interaction: discord.Interaction, member: discord.Member, reason: str = 'No reason provided'):
+    if not interaction.user.guild_permissions.kick_members:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    warns = load_json('warns.json')
+    uid = str(member.id)
+    if uid not in warns:
+        warns[uid] = []
+    warns[uid].append({'reason': reason, 'by': str(interaction.user), 'time': datetime.datetime.utcnow().isoformat()})
+    save_json('warns.json', warns)
+    await interaction.response.send_message(embed=mod_embed('⚠️ Member Warned', 0xFF9900, User=str(member), Reason=reason, **{'Total Warns': len(warns[uid])}))
+    add_log('WARN', f'{interaction.user} warned {member} | {reason}', interaction.guild.id)
+
+@bot.tree.command(name='warnings', description='View warnings for a member')
+@app_commands.describe(member='The member to check')
+async def slash_warnings(interaction: discord.Interaction, member: discord.Member):
+    warns = load_json('warns.json')
+    user_warns = warns.get(str(member.id), [])
+    if not user_warns:
+        return await interaction.response.send_message(f'✅ **{member}** has no warnings.')
+    embed = discord.Embed(title=f'⚠️ Warnings for {member}', color=0xFF9900)
+    for i, w in enumerate(user_warns, 1):
+        embed.add_field(name=f'Warn #{i}', value=f"Reason: {w['reason']}\nBy: {w['by']}", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name='purge', description='Delete a number of messages')
+@app_commands.describe(amount='Number of messages to delete')
+async def slash_purge(interaction: discord.Interaction, amount: int):
+    if not interaction.user.guild_permissions.manage_messages:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.send_message(f'🧹 Deleting {amount} messages...', ephemeral=True)
+    await interaction.channel.purge(limit=amount)
+    add_log('PURGE', f'{interaction.user} purged {amount} messages in #{interaction.channel.name}', interaction.guild.id)
+
+@bot.tree.command(name='ticket', description='Open a support ticket')
+@app_commands.describe(reason='What do you need help with?')
+async def slash_ticket(interaction: discord.Interaction, reason: str = 'General Support'):
+    await interaction.response.defer(ephemeral=True)
+    channel = await _open_ticket(interaction.guild, interaction.user, None, reason)
+    await interaction.followup.send(f'✅ Ticket created: {channel.mention}', ephemeral=True)
+
+@bot.tree.command(name='closeticket', description='Close the current ticket channel')
+async def slash_closeticket(interaction: discord.Interaction):
+    if 'ticket-' not in interaction.channel.name:
+        return await interaction.response.send_message('❌ This is not a ticket channel.', ephemeral=True)
+    await interaction.response.send_message('🔒 Closing in 5 seconds...')
+    tickets = load_json('tickets.json')
+    for t in tickets.get('tickets', []):
+        if t.get('channel_id') == str(interaction.channel.id):
+            t['status'] = 'closed'
+    save_json('tickets.json', tickets)
+    add_log('TICKET_CLOSE', f'{interaction.user} closed {interaction.channel.name}', interaction.guild.id)
+    await asyncio.sleep(5)
+    await interaction.channel.delete()
+
+@bot.tree.command(name='giverole', description='Give a role to a member')
+@app_commands.describe(member='The member', role='The role to give')
+async def slash_giverole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    if not interaction.user.guild_permissions.manage_roles:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await member.add_roles(role)
+    await interaction.response.send_message(f'✅ Gave **{role.name}** to **{member}**.')
+    add_log('ROLE_GIVE', f'{interaction.user} gave {role.name} to {member}', interaction.guild.id)
+
+@bot.tree.command(name='removerole', description='Remove a role from a member')
+@app_commands.describe(member='The member', role='The role to remove')
+async def slash_removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    if not interaction.user.guild_permissions.manage_roles:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await member.remove_roles(role)
+    await interaction.response.send_message(f'✅ Removed **{role.name}** from **{member}**.')
+    add_log('ROLE_REMOVE', f'{interaction.user} removed {role.name} from {member}', interaction.guild.id)
+
+@bot.tree.command(name='announce', description='Send an announcement to a channel')
+@app_commands.describe(channel='Channel to announce in', message='The announcement message')
+async def slash_announce(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    embed = discord.Embed(description=message, color=0x00d4ff, timestamp=datetime.datetime.utcnow())
+    embed.set_author(name='📢 Announcement', icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
+    embed.set_footer(text=f'Announced by {interaction.user}')
+    await channel.send(embed=embed)
+    await interaction.response.send_message(f'✅ Sent to {channel.mention}', ephemeral=True)
+    add_log('ANNOUNCE', f'{interaction.user} announced in #{channel.name}', interaction.guild.id)
+
+@bot.tree.command(name='giveaway', description='Start a giveaway')
+@app_commands.describe(minutes='Duration in minutes', winners='Number of winners', prize='What are you giving away?')
+async def slash_giveaway(interaction: discord.Interaction, minutes: int, winners: int, prize: str):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    end_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
+    embed = discord.Embed(title='🎉 GIVEAWAY 🎉', description=f'**Prize:** {prize}\n**Winners:** {winners}\n**Ends:** <t:{int(end_time.timestamp())}:R>\n\nReact with 🎉 to enter!', color=0x00FF88, timestamp=end_time)
+    embed.set_footer(text=f'Hosted by {interaction.user}')
+    await interaction.response.send_message(embed=embed)
+    msg = await interaction.original_response()
+    await msg.add_reaction('🎉')
+    add_log('GIVEAWAY_START', f'{interaction.user} started: {prize} ({winners}w {minutes}m)', interaction.guild.id)
+    await asyncio.sleep(minutes * 60)
+    msg = await interaction.channel.fetch_message(msg.id)
+    reaction = discord.utils.get(msg.reactions, emoji='🎉')
+    users = [u async for u in reaction.users() if not u.bot]
+    if not users:
+        await interaction.channel.send('🎉 Giveaway ended but nobody entered!')
+        return
+    winner_list = random.sample(users, min(winners, len(users)))
+    winner_mentions = ', '.join(w.mention for w in winner_list)
+    await interaction.channel.send(embed=discord.Embed(title='🎉 Giveaway Ended!', description=f'**Prize:** {prize}\n**Winner(s):** {winner_mentions}', color=0x00FF88))
+    add_log('GIVEAWAY_END', f'Giveaway: {prize} | Winners: {[str(w) for w in winner_list]}', interaction.guild.id)
+
+# ============================================================
+# SHARED TICKET LOGIC
+# ============================================================
+async def _open_ticket(guild, user, reply_channel, reason):
+    settings = load_json('settings.json')
+    tickets = load_json('tickets.json')
+    if 'count' not in tickets:
+        tickets['count'] = 0
+    tickets['count'] += 1
+    ticket_num = tickets['count']
+    topic_slug = reason.lower().replace(' ', '-')[:20]
+    channel_name = f'ticket-{ticket_num:04d}-{topic_slug}'
+    category_id = settings.get('ticket_category')
+    category = guild.get_channel(int(category_id)) if category_id else None
+    support_role_id = settings.get('ticket_support_role')
+    support_role = guild.get_role(int(support_role_id)) if support_role_id else None
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
+        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
+    }
+    if support_role:
+        overwrites[support_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+    for role in guild.roles:
+        if role.permissions.administrator:
+            overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+    channel = await guild.create_text_channel(channel_name, overwrites=overwrites, category=category, topic=f'Ticket #{ticket_num:04d} | {user} | {reason}')
+    if 'tickets' not in tickets:
+        tickets['tickets'] = []
+    tickets['tickets'].insert(0, {
+        'id': ticket_num,
+        'user': str(user),
+        'user_id': str(user.id),
+        'reason': reason,
+        'channel': channel_name,
+        'channel_id': str(channel.id),
+        'status': 'open',
+        'time': datetime.datetime.utcnow().isoformat()
+    })
+    save_json('tickets.json', tickets)
+    embed = discord.Embed(
+        title=f'🎫 Ticket #{ticket_num:04d}',
+        description=f'**Topic:** {reason}\n**Opened by:** {user.mention}\n\nSupport will be with you shortly!\n\n> Use the buttons below to manage this ticket.',
+        color=0x5865F2,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text='KPT_BOT Ticket System')
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(label='🔒 Close Ticket', style=discord.ButtonStyle.danger, custom_id=f'close_{channel.id}'))
+    view.add_item(discord.ui.Button(label='✋ Claim', style=discord.ButtonStyle.secondary, custom_id=f'claim_{channel.id}'))
+    mention_str = f'{user.mention}{" " + support_role.mention if support_role else ""}'
+    await channel.send(mention_str, embed=embed, view=view)
+    add_log('TICKET_OPEN', f'{user} opened ticket #{ticket_num:04d}: {reason}', guild.id)
+    return channel
 
 # ---------- Run ----------
 bot.run(os.getenv('DISCORD_TOKEN'))
