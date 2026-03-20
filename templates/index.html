@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KPT_BOT Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0b0f;
+    --surface: #11131a;
+    --surface2: #181c26;
+    --border: #1e2333;
+    --accent: #5865F2;
+    --accent2: #00d4ff;
+    --green: #00ff88;
+    --red: #ff4466;
+    --yellow: #ffcc00;
+    --text: #e8eaf6;
+    --muted: #5c6380;
+    --glow: 0 0 20px rgba(88,101,242,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Background grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(88,101,242,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(88,101,242,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .layout {
+    display: flex;
+    min-height: 100vh;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 240px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    height: 100vh;
+    top: 0;
+    left: 0;
+  }
+
+  .logo {
+    padding: 28px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 38px;
+    height: 38px;
+    background: var(--accent);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    box-shadow: var(--glow);
+  }
+
+  .logo-text {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: 2px;
+    color: var(--text);
+  }
+
+  .logo-sub {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .bot-status {
+    margin: 16px;
+    padding: 10px 14px;
+    background: rgba(0,255,136,0.05);
+    border: 1px solid rgba(0,255,136,0.15);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--green);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    background: var(--green);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0,255,136,0.4); }
+    50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(0,255,136,0); }
+  }
+
+  nav { padding: 8px 12px; flex: 1; }
+
+  .nav-section {
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding: 16px 8px 8px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    transition: all 0.2s;
+    border: 1px solid transparent;
+    margin-bottom: 2px;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-decoration: none;
+  }
+
+  .nav-item:hover, .nav-item.active {
+    background: rgba(88,101,242,0.1);
+    border-color: rgba(88,101,242,0.2);
+    color: var(--text);
+  }
+
+  .nav-item.active { color: var(--accent2); }
+  .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+  /* Main */
+  .main {
+    margin-left: 240px;
+    flex: 1;
+    padding: 32px;
+    max-width: calc(100vw - 240px);
+  }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  .page-header {
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .page-title {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--text);
+  }
+
+  .page-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* Stats */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--accent);
+  }
+
+  .stat-card:nth-child(2)::before { background: var(--accent2); }
+  .stat-card:nth-child(3)::before { background: var(--green); }
+  .stat-card:nth-child(4)::before { background: var(--yellow); }
+
+  .stat-card:hover { border-color: rgba(88,101,242,0.3); }
+
+  .stat-label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .stat-value {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+  }
+
+  .stat-icon {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    font-size: 22px;
+    opacity: 0.3;
+  }
+
+  /* Grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    margin-bottom: 20px;
+  }
+
+  .card-title {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--accent2);
+    text-transform: uppercase;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Inputs */
+  .form-group { margin-bottom: 16px; }
+  .form-label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .form-input, .form-select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .form-input:focus, .form-select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(88,101,242,0.1);
+  }
+
+  .form-select option { background: var(--surface2); }
+
+  /* Toggle */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .toggle-row:last-child { border-bottom: none; }
+
+  .toggle-info { flex: 1; }
+  .toggle-name {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .toggle-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .toggle {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .toggle input { display: none; }
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: 0.3s;
+  }
+  .toggle-slider::after {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    background: white;
+    border-radius: 50%;
+    top: 3px;
+    left: 3px;
+    transition: 0.3s;
+  }
+  .toggle input:checked + .toggle-slider { background: var(--accent); }
+  .toggle input:checked + .toggle-slider::after { transform: translateX(20px); }
+
+  /* Button */
+  .btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 4px 15px rgba(88,101,242,0.3);
+  }
+  .btn-primary:hover { background: #4752d0; transform: translateY(-1px); }
+
+  .btn-green {
+    background: rgba(0,255,136,0.1);
+    color: var(--green);
+    border: 1px solid rgba(0,255,136,0.2);
+  }
+  .btn-green:hover { background: rgba(0,255,136,0.2); }
+
+  .btn-red {
+    background: rgba(255,68,102,0.1);
+    color: var(--red);
+    border: 1px solid rgba(255,68,102,0.2);
+  }
+
+  /* Logs */
+  .log-list { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; }
+
+  .log-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .log-item.BAN, .log-item.KICK { border-left-color: var(--red); }
+  .log-item.MUTE { border-left-color: var(--yellow); }
+  .log-item.TICKET_OPEN, .log-item.TICKET_CLOSE { border-left-color: var(--green); }
+  .log-item.AUTOMOD { border-left-color: var(--accent2); }
+
+  .log-type {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 3px 7px;
+    border-radius: 4px;
+    background: rgba(88,101,242,0.15);
+    color: var(--accent2);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .log-details { font-size: 12px; color: var(--text); flex: 1; }
+  .log-time { font-size: 10px; color: var(--muted); flex-shrink: 0; }
+
+  /* Commands table */
+  .cmd-table { width: 100%; border-collapse: collapse; }
+  .cmd-table th {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+  }
+  .cmd-table td {
+    padding: 12px 12px;
+    border-bottom: 1px solid rgba(30,35,51,0.5);
+    font-size: 13px;
+  }
+  .cmd-table tr:hover td { background: var(--surface2); }
+
+  code {
+    background: rgba(88,101,242,0.1);
+    border: 1px solid rgba(88,101,242,0.2);
+    color: var(--accent2);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+
+  .badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .badge-mod { background: rgba(88,101,242,0.15); color: var(--accent); }
+  .badge-admin { background: rgba(255,68,102,0.15); color: var(--red); }
+  .badge-all { background: rgba(0,255,136,0.1); color: var(--green); }
+
+  /* Tags input */
+  .tags-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    min-height: 46px;
+    cursor: text;
+  }
+  .tags-container:focus-within { border-color: var(--accent); }
+  .tag {
+    background: rgba(255,68,102,0.1);
+    border: 1px solid rgba(255,68,102,0.2);
+    color: var(--red);
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tag-remove { cursor: pointer; opacity: 0.6; }
+  .tag-remove:hover { opacity: 1; }
+  .tag-input {
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    outline: none;
+    flex: 1;
+    min-width: 100px;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    padding: 14px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--green);
+    z-index: 1000;
+    animation: slideIn 0.3s ease;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  }
+
+  @keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <div class="logo-text">KPT_BOT</div>
+        <div class="logo-sub">Dashboard v1.0</div>
+      </div>
+    </div>
+
+    <div class="bot-status">
+      <div class="status-dot"></div>
+      Bot Online
+    </div>
+
+    <nav>
+      <div class="nav-section">Overview</div>
+      <a class="nav-item active" onclick="showPage('overview', this)">
+        <span class="nav-icon">📊</span> Overview
+      </a>
+      <a class="nav-item" onclick="showPage('logs', this)">
+        <span class="nav-icon">📋</span> Activity Logs
+      </a>
+
+      <div class="nav-section">Management</div>
+      <a class="nav-item" onclick="showPage('settings', this)">
+        <span class="nav-icon">⚙️</span> Settings
+      </a>
+      <a class="nav-item" onclick="showPage('moderation', this)">
+        <span class="nav-icon">🛡️</span> Moderation
+      </a>
+      <a class="nav-item" onclick="showPage('tickets', this)">
+        <span class="nav-icon">🎫</span> Tickets
+      </a>
+
+      <div class="nav-section">Reference</div>
+      <a class="nav-item" onclick="showPage('commands', this)">
+        <span class="nav-icon">💬</span> Commands
+      </a>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+
+    <!-- OVERVIEW -->
+    <div id="page-overview" class="page active">
+      <div class="page-header">
+        <div class="page-title">OVERVIEW</div>
+        <div class="page-sub">Real-time stats and activity</div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon">📋</div>
+          <div class="stat-label">Total Logs</div>
+          <div class="stat-value" id="stat-logs">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">⚠️</div>
+          <div class="stat-label">Total Warns</div>
+          <div class="stat-value" id="stat-warns">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">🎫</div>
+          <div class="stat-label">Open Tickets</div>
+          <div class="stat-value" id="stat-open-tickets">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📁</div>
+          <div class="stat-label">Total Tickets</div>
+          <div class="stat-value" id="stat-total-tickets">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">⚡ Recent Activity</div>
+        <div class="log-list" id="overview-logs">
+          <div style="color:var(--muted);font-size:12px;">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOGS -->
+    <div id="page-logs" class="page">
+      <div class="page-header">
+        <div class="page-title">ACTIVITY LOGS</div>
+        <div class="page-sub">All bot actions and events</div>
+      </div>
+      <div class="card">
+        <div class="card-title">📋 All Logs</div>
+        <div class="log-list" id="all-logs">
+          <div style="color:var(--muted);font-size:12px;">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="page-settings" class="page">
+      <div class="page-header">
+        <div class="page-title">SETTINGS</div>
+        <div class="page-sub">Configure KPT_BOT behaviour</div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">⚙️ General</div>
+
+          <div class="form-group">
+            <label class="form-label">Command Prefix</label>
+            <input class="form-input" id="setting-prefix" placeholder="!" maxlength="5">
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <div class="toggle-name">Auto-Mod</div>
+              <div class="toggle-desc">Automatically delete banned words</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="setting-automod">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div style="margin-top:20px;">
+            <button class="btn btn-primary" onclick="saveSettings()">SAVE SETTINGS</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">🚫 Bad Words Filter</div>
+          <div class="form-group">
+            <label class="form-label">Banned Words (press Enter to add)</label>
+            <div class="tags-container" id="bad-words-container" onclick="document.getElementById('bad-word-input').focus()">
+              <input class="tag-input" id="bad-word-input" placeholder="Type a word and press Enter...">
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="saveBadWords()">SAVE BAD WORDS</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODERATION -->
+    <div id="page-moderation" class="page">
+      <div class="page-header">
+        <div class="page-title">MODERATION</div>
+        <div class="page-sub">View warnings and moderation history</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">⚠️ User Warnings</div>
+        <div id="warns-list" style="color:var(--muted);font-size:12px;">Loading...</div>
+      </div>
+    </div>
+
+    <!-- TICKETS -->
+    <div id="page-tickets" class="page">
+      <div class="page-header">
+        <div class="page-title">TICKETS</div>
+        <div class="page-sub">Support ticket management</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎫 Ticket History</div>
+        <div id="tickets-list" style="color:var(--muted);font-size:12px;">Loading...</div>
+      </div>
+    </div>
+
+    <!-- COMMANDS -->
+    <div id="page-commands" class="page">
+      <div class="page-header">
+        <div class="page-title">COMMANDS</div>
+        <div class="page-sub">All available bot commands</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">💬 Command Reference</div>
+        <table class="cmd-table">
+          <thead>
+            <tr>
+              <th>Command</th>
+              <th>Description</th>
+              <th>Permission</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>!ping</code></td><td>Check bot latency</td><td><span class="badge badge-all">Everyone</span></td></tr>
+            <tr><td><code>!info</code></td><td>Bot info & stats</td><td><span class="badge badge-all">Everyone</span></td></tr>
+            <tr><td><code>!kick @user [reason]</code></td><td>Kick a member</td><td><span class="badge badge-mod">Kick Members</span></td></tr>
+            <tr><td><code>!ban @user [reason]</code></td><td>Ban a member</td><td><span class="badge badge-mod">Ban Members</span></td></tr>
+            <tr><td><code>!mute @user [minutes]</code></td><td>Timeout a member</td><td><span class="badge badge-mod">Moderate</span></td></tr>
+            <tr><td><code>!unmute @user</code></td><td>Remove timeout</td><td><span class="badge badge-mod">Moderate</span></td></tr>
+            <tr><td><code>!warn @user [reason]</code></td><td>Warn a member</td><td><span class="badge badge-mod">Kick Members</span></td></tr>
+            <tr><td><code>!warnings @user</code></td><td>View user warnings</td><td><span class="badge badge-all">Everyone</span></td></tr>
+            <tr><td><code>!clearwarns @user</code></td><td>Clear all warnings</td><td><span class="badge badge-admin">Admin</span></td></tr>
+            <tr><td><code>!purge [amount]</code></td><td>Delete messages</td><td><span class="badge badge-mod">Manage Msg</span></td></tr>
+            <tr><td><code>!setprefix [prefix]</code></td><td>Change command prefix</td><td><span class="badge badge-admin">Admin</span></td></tr>
+            <tr><td><code>!automod on/off</code></td><td>Toggle auto-mod filter</td><td><span class="badge badge-admin">Admin</span></td></tr>
+            <tr><td><code>!addbadword [word]</code></td><td>Add word to filter</td><td><span class="badge badge-admin">Admin</span></td></tr>
+            <tr><td><code>!ticket [reason]</code></td><td>Open a support ticket</td><td><span class="badge badge-all">Everyone</span></td></tr>
+            <tr><td><code>!closeticket</code></td><td>Close current ticket</td><td><span class="badge badge-all">In ticket only</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// Navigation
+function showPage(id, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  el.classList.add('active');
+  loadPageData(id);
+}
+
+function loadPageData(id) {
+  if (id === 'overview') { loadStats(); loadLogs('overview-logs', 8); }
+  if (id === 'logs') loadLogs('all-logs', 100);
+  if (id === 'settings') loadSettings();
+  if (id === 'moderation') loadWarns();
+  if (id === 'tickets') loadTickets();
+}
+
+// Format time
+function timeAgo(iso) {
+  const d = new Date(iso + 'Z');
+  const diff = Math.floor((Date.now() - d) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return d.toLocaleDateString();
+}
+
+// Stats
+async function loadStats() {
+  const r = await fetch('/api/stats');
+  const d = await r.json();
+  document.getElementById('stat-logs').textContent = d.total_logs;
+  document.getElementById('stat-warns').textContent = d.total_warns;
+  document.getElementById('stat-open-tickets').textContent = d.open_tickets;
+  document.getElementById('stat-total-tickets').textContent = d.total_tickets;
+}
+
+// Logs
+async function loadLogs(containerId, limit) {
+  const r = await fetch('/api/logs');
+  const logs = await r.json();
+  const container = document.getElementById(containerId);
+  if (!logs.length) { container.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:12px 0;">No logs yet — actions will appear here once the bot is active.</div>'; return; }
+  container.innerHTML = logs.slice(0, limit).map(l => `
+    <div class="log-item ${l.action}">
+      <span class="log-type">${l.action}</span>
+      <span class="log-details">${l.details}</span>
+      <span class="log-time">${timeAgo(l.timestamp)}</span>
+    </div>
+  `).join('');
+}
+
+// Settings
+async function loadSettings() {
+  const r = await fetch('/api/settings');
+  const s = await r.json();
+  document.getElementById('setting-prefix').value = s.prefix || '!';
+  document.getElementById('setting-automod').checked = s.automod || false;
+
+  // Load bad words
+  const container = document.getElementById('bad-words-container');
+  const input = document.getElementById('bad-word-input');
+  container.querySelectorAll('.tag').forEach(t => t.remove());
+  (s.bad_words || []).forEach(w => addTag(w, container, input));
+}
+
+async function saveSettings() {
+  const prefix = document.getElementById('setting-prefix').value || '!';
+  const automod = document.getElementById('setting-automod').checked;
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix, automod })
+  });
+  showToast('✅ Settings saved!');
+}
+
+async function saveBadWords() {
+  const tags = [...document.querySelectorAll('#bad-words-container .tag')].map(t => t.dataset.word);
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bad_words: tags })
+  });
+  showToast('✅ Bad words list saved!');
+}
+
+// Tag input
+function addTag(word, container, input) {
+  const tag = document.createElement('span');
+  tag.className = 'tag';
+  tag.dataset.word = word;
+  tag.innerHTML = `${word} <span class="tag-remove" onclick="this.parentElement.remove()">×</span>`;
+  container.insertBefore(tag, input);
+}
+
+document.getElementById('bad-word-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && this.value.trim()) {
+    e.preventDefault();
+    addTag(this.value.trim().toLowerCase(), document.getElementById('bad-words-container'), this);
+    this.value = '';
+  }
+});
+
+// Warns
+async function loadWarns() {
+  const r = await fetch('/api/warns');
+  const warns = await r.json();
+  const container = document.getElementById('warns-list');
+  const entries = Object.entries(warns);
+  if (!entries.length) { container.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:12px 0;">No warnings on record.</div>'; return; }
+  container.innerHTML = entries.map(([uid, ws]) => `
+    <div style="margin-bottom:16px;padding:14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);">
+      <div style="font-family:Rajdhani,sans-serif;font-size:14px;font-weight:700;margin-bottom:10px;">
+        User ID: <span style="color:var(--accent2)">${uid}</span>
+        <span style="background:rgba(255,68,102,0.1);color:var(--red);border-radius:4px;padding:2px 8px;font-size:11px;margin-left:8px;">${ws.length} warn${ws.length !== 1 ? 's' : ''}</span>
+      </div>
+      ${ws.map((w, i) => `
+        <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
+          <span style="color:var(--muted)">#${i+1}</span>
+          <span style="margin-left:10px;">${w.reason}</span>
+          <span style="color:var(--muted);float:right;font-size:11px;">by ${w.by} · ${timeAgo(w.time)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+// Tickets
+async function loadTickets() {
+  const r = await fetch('/api/tickets');
+  const tickets = await r.json();
+  const container = document.getElementById('tickets-list');
+  if (!tickets.length) { container.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:12px 0;">No tickets yet.</div>'; return; }
+  container.innerHTML = `
+    <table class="cmd-table">
+      <thead><tr><th>User</th><th>Reason</th><th>Channel</th><th>Status</th><th>Time</th></tr></thead>
+      <tbody>${tickets.map(t => `
+        <tr>
+          <td>${t.user}</td>
+          <td>${t.reason}</td>
+          <td><code>${t.channel}</code></td>
+          <td><span class="badge ${t.status === 'open' ? 'badge-all' : 'badge-mod'}">${t.status}</span></td>
+          <td style="color:var(--muted);font-size:11px;">${timeAgo(t.time)}</td>
+        </tr>
+      `).join('')}</tbody>
+    </table>
+  `;
+}
+
+// Toast
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// Init
+loadStats();
+loadLogs('overview-logs', 8);
+</script>
+</body>
+</html>
