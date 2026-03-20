@@ -109,16 +109,9 @@ def ask_groq(user_message: str) -> str:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = _json.loads(resp.read().decode('utf-8'))
             return data['choices'][0]['message']['content']
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8')
-        print(f"Groq HTTP error {e.code}: {body}")
-        return f"⚠️ Groq error {e.code} — check Railway logs!"
-    except urllib.error.URLError as e:
-        print(f"Groq URL error: {e.reason}")
-        return f"⚠️ Groq connection error — check Railway logs!"
     except Exception as e:
-        print(f"Groq exception: {type(e).__name__}: {e}")
-        return f"⚠️ Groq exception — check Railway logs!"
+        print(f"Groq error: {e}")
+        return "⚠️ I'm having a moment — try again shortly! Need urgent help? Open a ticket in the server. 🎫"
 
 # ---------- Helper: shared response embed ----------
 def mod_embed(title, color, **fields):
@@ -534,8 +527,9 @@ async def slash_help(interaction: discord.Interaction):
 async def slash_kick(interaction: discord.Interaction, member: discord.Member, reason: str = 'No reason provided'):
     if not interaction.user.guild_permissions.kick_members:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer()
     await member.kick(reason=reason)
-    await interaction.response.send_message(embed=mod_embed('👢 Member Kicked', 0xFF4466, User=str(member), Reason=reason, Moderator=str(interaction.user)))
+    await interaction.followup.send(embed=mod_embed('👢 Member Kicked', 0xFF4466, User=str(member), Reason=reason, Moderator=str(interaction.user)))
     add_log('KICK', f'{interaction.user} kicked {member} | {reason}', interaction.guild.id)
 
 @bot.tree.command(name='ban', description='Ban a member from the server')
@@ -543,8 +537,9 @@ async def slash_kick(interaction: discord.Interaction, member: discord.Member, r
 async def slash_ban(interaction: discord.Interaction, member: discord.Member, reason: str = 'No reason provided'):
     if not interaction.user.guild_permissions.ban_members:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer()
     await member.ban(reason=reason)
-    await interaction.response.send_message(embed=mod_embed('🔨 Member Banned', 0xFF0000, User=str(member), Reason=reason, Moderator=str(interaction.user)))
+    await interaction.followup.send(embed=mod_embed('🔨 Member Banned', 0xFF0000, User=str(member), Reason=reason, Moderator=str(interaction.user)))
     add_log('BAN', f'{interaction.user} banned {member} | {reason}', interaction.guild.id)
 
 @bot.tree.command(name='mute', description='Timeout (mute) a member')
@@ -552,8 +547,9 @@ async def slash_ban(interaction: discord.Interaction, member: discord.Member, re
 async def slash_mute(interaction: discord.Interaction, member: discord.Member, minutes: int = 10, reason: str = 'No reason provided'):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer()
     await member.timeout(datetime.timedelta(minutes=minutes), reason=reason)
-    await interaction.response.send_message(embed=mod_embed('🔇 Member Muted', 0xFFCC00, User=str(member), Duration=f'{minutes} minutes', Reason=reason))
+    await interaction.followup.send(embed=mod_embed('🔇 Member Muted', 0xFFCC00, User=str(member), Duration=f'{minutes} minutes', Reason=reason))
     add_log('MUTE', f'{interaction.user} muted {member} for {minutes}m | {reason}', interaction.guild.id)
 
 @bot.tree.command(name='unmute', description='Remove a timeout from a member')
@@ -561,8 +557,9 @@ async def slash_mute(interaction: discord.Interaction, member: discord.Member, m
 async def slash_unmute(interaction: discord.Interaction, member: discord.Member):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer()
     await member.timeout(None)
-    await interaction.response.send_message(f'🔊 **{member}** has been unmuted.')
+    await interaction.followup.send(f'🔊 **{member}** has been unmuted.')
     add_log('UNMUTE', f'{interaction.user} unmuted {member}', interaction.guild.id)
 
 @bot.tree.command(name='warn', description='Warn a member')
@@ -570,26 +567,28 @@ async def slash_unmute(interaction: discord.Interaction, member: discord.Member)
 async def slash_warn(interaction: discord.Interaction, member: discord.Member, reason: str = 'No reason provided'):
     if not interaction.user.guild_permissions.kick_members:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer()
     warns = load_json('warns.json')
     uid = str(member.id)
     if uid not in warns:
         warns[uid] = []
     warns[uid].append({'reason': reason, 'by': str(interaction.user), 'time': datetime.datetime.utcnow().isoformat()})
     save_json('warns.json', warns)
-    await interaction.response.send_message(embed=mod_embed('⚠️ Member Warned', 0xFF9900, User=str(member), Reason=reason, **{'Total Warns': len(warns[uid])}))
+    await interaction.followup.send(embed=mod_embed('⚠️ Member Warned', 0xFF9900, User=str(member), Reason=reason, **{'Total Warns': len(warns[uid])}))
     add_log('WARN', f'{interaction.user} warned {member} | {reason}', interaction.guild.id)
 
 @bot.tree.command(name='warnings', description='View warnings for a member')
 @app_commands.describe(member='The member to check')
 async def slash_warnings(interaction: discord.Interaction, member: discord.Member):
+    await interaction.response.defer()
     warns = load_json('warns.json')
     user_warns = warns.get(str(member.id), [])
     if not user_warns:
-        return await interaction.response.send_message(f'✅ **{member}** has no warnings.')
+        return await interaction.followup.send(f'✅ **{member}** has no warnings.')
     embed = discord.Embed(title=f'⚠️ Warnings for {member}', color=0xFF9900)
     for i, w in enumerate(user_warns, 1):
         embed.add_field(name=f'Warn #{i}', value=f"Reason: {w['reason']}\nBy: {w['by']}", inline=False)
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name='purge', description='Delete a number of messages')
 @app_commands.describe(amount='Number of messages to delete')
@@ -626,8 +625,9 @@ async def slash_closeticket(interaction: discord.Interaction):
 async def slash_giverole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if not interaction.user.guild_permissions.manage_roles:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer()
     await member.add_roles(role)
-    await interaction.response.send_message(f'✅ Gave **{role.name}** to **{member}**.')
+    await interaction.followup.send(f'✅ Gave **{role.name}** to **{member}**.')
     add_log('ROLE_GIVE', f'{interaction.user} gave {role.name} to {member}', interaction.guild.id)
 
 @bot.tree.command(name='removerole', description='Remove a role from a member')
@@ -635,8 +635,9 @@ async def slash_giverole(interaction: discord.Interaction, member: discord.Membe
 async def slash_removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if not interaction.user.guild_permissions.manage_roles:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer()
     await member.remove_roles(role)
-    await interaction.response.send_message(f'✅ Removed **{role.name}** from **{member}**.')
+    await interaction.followup.send(f'✅ Removed **{role.name}** from **{member}**.')
     add_log('ROLE_REMOVE', f'{interaction.user} removed {role.name} from {member}', interaction.guild.id)
 
 @bot.tree.command(name='announce', description='Send an announcement to a channel')
@@ -644,11 +645,12 @@ async def slash_removerole(interaction: discord.Interaction, member: discord.Mem
 async def slash_announce(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(description=message, color=0x00d4ff, timestamp=datetime.datetime.utcnow())
     embed.set_author(name='📢 Announcement', icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
     embed.set_footer(text=f'Announced by {interaction.user}')
     await channel.send(embed=embed)
-    await interaction.response.send_message(f'✅ Sent to {channel.mention}', ephemeral=True)
+    await interaction.followup.send(f'✅ Announcement sent to {channel.mention}!', ephemeral=True)
     add_log('ANNOUNCE', f'{interaction.user} announced in #{channel.name}', interaction.guild.id)
 
 @bot.tree.command(name='giveaway', description='Start a giveaway')
@@ -656,11 +658,11 @@ async def slash_announce(interaction: discord.Interaction, channel: discord.Text
 async def slash_giveaway(interaction: discord.Interaction, minutes: int, winners: int, prize: str):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message('❌ No permission.', ephemeral=True)
+    await interaction.response.defer()
     end_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
     embed = discord.Embed(title='🎉 GIVEAWAY 🎉', description=f'**Prize:** {prize}\n**Winners:** {winners}\n**Ends:** <t:{int(end_time.timestamp())}:R>\n\nReact with 🎉 to enter!', color=0x00FF88, timestamp=end_time)
     embed.set_footer(text=f'Hosted by {interaction.user}')
-    await interaction.response.send_message(embed=embed)
-    msg = await interaction.original_response()
+    msg = await interaction.followup.send(embed=embed)
     await msg.add_reaction('🎉')
     add_log('GIVEAWAY_START', f'{interaction.user} started: {prize} ({winners}w {minutes}m)', interaction.guild.id)
     await asyncio.sleep(minutes * 60)
