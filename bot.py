@@ -62,6 +62,7 @@ class KPTBot(commands.Bot):
         ))
 
 bot = KPTBot()
+bot.remove_command('help')  # ← ADD THIS LINE
 
 # ---------- Helper: shared response embed ----------
 def mod_embed(title, color, **fields):
