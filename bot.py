@@ -6,6 +6,7 @@ import json
 import datetime
 import random
 import asyncio
+import aiohttp
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -107,10 +108,76 @@ async def on_member_remove(member):
             await channel.send(embed=embed)
     add_log('MEMBER_LEAVE', f'{member} left {guild.name}', guild.id)
 
+async def ask_ai(user_message: str) -> str:
+    """Send message to Claude API and get a response."""
+    api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not api_key:
+        return "⚠️ AI is not configured yet. Please ask a staff member for help!"
+
+    system_prompt = """You are KPT_BOT, the official AI assistant for the KaramPlaysThis Discord community and content brand.
+
+KaramPlaysThis is a gaming content creator community. You help members with:
+- Questions about the KaramPlaysThis Discord server (roles, channels, rules, tickets, commands, bots, how to get help)
+- Questions about KaramPlaysThis content (videos, streams, games played, community events, giveaways)
+- Suggestions for getting the most out of the community
+- Troubleshooting server-related issues
+
+Your personality:
+- Professional yet warm and friendly — like a knowledgeable community manager
+- Energetic and enthusiastic about the community
+- Clear and helpful with step-by-step suggestions when needed
+- Always end responses with an encouraging note or call to action
+
+IMPORTANT RULE:
+If the user's message is clearly NOT about KaramPlaysThis, the Discord server, or gaming community topics — politely decline and redirect them. Use this exact format for off-topic messages:
+
+"Hey! 👋 I'm KPT_BOT, the official assistant for the **KaramPlaysThis** community. I can only help with questions about our Discord server or KaramPlaysThis content. Feel free to ask me anything about the community — I'm here to help! 🎮"
+
+Keep responses concise (under 300 words). Use Discord markdown formatting (bold, bullet points) to keep things readable."""
+
+    payload = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 1000,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_message}]
+    }
+
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers) as resp:
+                data = await resp.json()
+                if resp.status == 200:
+                    return data['content'][0]['text']
+                else:
+                    return "⚠️ I'm having trouble thinking right now. Please try again in a moment!"
+    except Exception as e:
+        return "⚠️ Something went wrong on my end. Please try again shortly!"
+
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
+
+    # ---- DM Handler ----
+    if isinstance(message.channel, discord.DMChannel):
+        async with message.channel.typing():
+            reply = await ask_ai(message.content)
+            # Split long messages if needed
+            if len(reply) > 2000:
+                for i in range(0, len(reply), 2000):
+                    await message.channel.send(reply[i:i+2000])
+            else:
+                await message.channel.send(reply)
+        add_log('DM_AI', f'{message.author}: {message.content[:60]}...' if len(message.content) > 60 else f'{message.author}: {message.content}')
+        return
+
     settings = load_json('settings.json')
     custom_cmds = load_json('custom_commands.json')
     prefix = settings.get('prefix', '!')
