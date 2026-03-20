@@ -109,9 +109,16 @@ def ask_groq(user_message: str) -> str:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = _json.loads(resp.read().decode('utf-8'))
             return data['choices'][0]['message']['content']
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8')
+        print(f"Groq HTTP error {e.code}: {body}")
+        return f"⚠️ Groq error {e.code} — check Railway logs!"
+    except urllib.error.URLError as e:
+        print(f"Groq URL error: {e.reason}")
+        return f"⚠️ Groq connection error — check Railway logs!"
     except Exception as e:
-        print(f"Groq error: {e}")
-        return "⚠️ I'm having a moment — try again shortly! Need urgent help? Open a ticket in the server. 🎫"
+        print(f"Groq exception: {type(e).__name__}: {e}")
+        return f"⚠️ Groq exception — check Railway logs!"
 
 # ---------- Helper: shared response embed ----------
 def mod_embed(title, color, **fields):
