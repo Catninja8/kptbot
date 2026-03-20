@@ -6,7 +6,8 @@ import json
 import datetime
 import random
 import asyncio
-import aiohttp
+import urllib.request
+import urllib.error
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -62,7 +63,55 @@ class KPTBot(commands.Bot):
         ))
 
 bot = KPTBot()
-bot.remove_command('help')  # ← ADD THIS LINE
+bot.remove_command('help')
+
+# ---------- Groq AI ----------
+def ask_groq(user_message: str) -> str:
+    api_key = os.getenv('GROQ_API_KEY')
+    if not api_key:
+        return "⚠️ AI isn't set up yet — please contact a staff member for help!"
+
+    system_prompt = (
+        "You are KPT_BOT, the friendly AI assistant for the KaramPlaysThis Discord community. "
+        "Your personality: professional, warm, energetic, and helpful — like a community manager who loves gaming.\n\n"
+        "RULES:\n"
+        "1. Answer ANY question helpfully. You are a general-purpose assistant.\n"
+        "2. If the question is about KaramPlaysThis, the server, gaming, roles, tickets, rules, streams or giveaways — "
+        "give an extra detailed, enthusiastic answer and tie it back to the community where possible.\n"
+        "3. For general questions (coding, math, life, etc.) — answer fully but end with a fun line like "
+        "'By the way, if you ever need server help, I'm always here! 🎮'\n"
+        "4. If the message contains hate speech, slurs, threats, sexual content, or requests for harmful/illegal info — "
+        "reply ONLY with: '⚠️ I can't help with that. Please keep things respectful! If you need server support, open a ticket. 🎫'\n"
+        "5. Keep responses under 280 words. Use Discord markdown (**bold**, bullet points) to keep things clean.\n"
+        "6. Always end positively and energetically! 🚀"
+    )
+
+    import json as _json
+    payload = _json.dumps({
+        "model": "llama3-8b-8192",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ],
+        "max_tokens": 500,
+        "temperature": 0.7
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = _json.loads(resp.read().decode('utf-8'))
+            return data['choices'][0]['message']['content']
+    except Exception as e:
+        print(f"Groq error: {e}")
+        return "⚠️ I'm having a moment — try again shortly! Need urgent help? Open a ticket in the server. 🎫"
 
 # ---------- Helper: shared response embed ----------
 def mod_embed(title, color, **fields):
@@ -109,74 +158,22 @@ async def on_member_remove(member):
             await channel.send(embed=embed)
     add_log('MEMBER_LEAVE', f'{member} left {guild.name}', guild.id)
 
-async def ask_ai(user_message: str) -> str:
-    """Send message to Claude API and get a response."""
-    api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not api_key:
-        return "⚠️ AI is not configured yet. Please ask a staff member for help!"
-
-    system_prompt = """You are KPT_BOT, the official AI assistant for the KaramPlaysThis Discord community and content brand.
-
-KaramPlaysThis is a gaming content creator community. You help members with:
-- Questions about the KaramPlaysThis Discord server (roles, channels, rules, tickets, commands, bots, how to get help)
-- Questions about KaramPlaysThis content (videos, streams, games played, community events, giveaways)
-- Suggestions for getting the most out of the community
-- Troubleshooting server-related issues
-
-Your personality:
-- Professional yet warm and friendly — like a knowledgeable community manager
-- Energetic and enthusiastic about the community
-- Clear and helpful with step-by-step suggestions when needed
-- Always end responses with an encouraging note or call to action
-
-IMPORTANT RULE:
-If the user's message is clearly NOT about KaramPlaysThis, the Discord server, or gaming community topics — politely decline and redirect them. Use this exact format for off-topic messages:
-
-"Hey! 👋 I'm KPT_BOT, the official assistant for the **KaramPlaysThis** community. I can only help with questions about our Discord server or KaramPlaysThis content. Feel free to ask me anything about the community — I'm here to help! 🎮"
-
-Keep responses concise (under 300 words). Use Discord markdown formatting (bold, bullet points) to keep things readable."""
-
-    payload = {
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": 1000,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_message}]
-    }
-
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-    }
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers) as resp:
-                data = await resp.json()
-                if resp.status == 200:
-                    return data['content'][0]['text']
-                else:
-                    return "⚠️ I'm having trouble thinking right now. Please try again in a moment!"
-    except Exception as e:
-        return "⚠️ Something went wrong on my end. Please try again shortly!"
-
-
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # ---- DM Handler ----
+    # ---- DM Handler with Groq AI ----
     if isinstance(message.channel, discord.DMChannel):
         async with message.channel.typing():
-            reply = await ask_ai(message.content)
-            # Split long messages if needed
-            if len(reply) > 2000:
-                for i in range(0, len(reply), 2000):
-                    await message.channel.send(reply[i:i+2000])
-            else:
-                await message.channel.send(reply)
-        add_log('DM_AI', f'{message.author}: {message.content[:60]}...' if len(message.content) > 60 else f'{message.author}: {message.content}')
+            reply = ask_groq(message.content)
+        short = message.content[:60] + '...' if len(message.content) > 60 else message.content
+        add_log('DM_AI', f'{message.author}: {short}')
+        if len(reply) > 2000:
+            for i in range(0, len(reply), 2000):
+                await message.channel.send(reply[i:i+2000])
+        else:
+            await message.channel.send(reply)
         return
 
     settings = load_json('settings.json')
