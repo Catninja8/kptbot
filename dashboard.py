@@ -3,7 +3,6 @@ import json
 import os
 
 app = Flask(__name__)
-
 DATA_DIR = 'data'
 
 def load_json(path):
@@ -23,43 +22,72 @@ def save_json(path, data):
 def index():
     return render_template('index.html')
 
+# --- Settings ---
 @app.route('/api/settings', methods=['GET'])
 def get_settings():
     return jsonify(load_json('settings.json'))
 
 @app.route('/api/settings', methods=['POST'])
-def save_settings():
+def post_settings():
     data = request.json
     settings = load_json('settings.json')
     settings.update(data)
     save_json('settings.json', settings)
     return jsonify({'success': True})
 
-@app.route('/api/logs')
-def get_logs():
-    return jsonify(load_json('logs.json').get('logs', []))
-
-@app.route('/api/warns')
-def get_warns():
-    return jsonify(load_json('warns.json'))
-
-@app.route('/api/tickets')
-def get_tickets():
-    return jsonify(load_json('tickets.json').get('tickets', []))
-
+# --- Stats ---
 @app.route('/api/stats')
 def get_stats():
     logs = load_json('logs.json').get('logs', [])
     warns = load_json('warns.json')
-    tickets = load_json('tickets.json').get('tickets', [])
-    total_warns = sum(len(v) for v in warns.values())
-    open_tickets = sum(1 for t in tickets if t.get('status') == 'open')
+    tickets = load_json('tickets.json')
+    custom_cmds = load_json('custom_commands.json')
+    total_warns = sum(len(v) for v in warns.values() if isinstance(v, list))
+    ticket_list = tickets.get('tickets', [])
+    open_tickets = sum(1 for t in ticket_list if t.get('status') == 'open')
     return jsonify({
         'total_logs': len(logs),
         'total_warns': total_warns,
         'open_tickets': open_tickets,
-        'total_tickets': len(tickets)
+        'total_tickets': len(ticket_list),
+        'custom_commands': len(custom_cmds)
     })
+
+# --- Logs ---
+@app.route('/api/logs')
+def get_logs():
+    return jsonify(load_json('logs.json').get('logs', []))
+
+# --- Warns ---
+@app.route('/api/warns')
+def get_warns():
+    return jsonify(load_json('warns.json'))
+
+# --- Tickets ---
+@app.route('/api/tickets')
+def get_tickets():
+    return jsonify(load_json('tickets.json').get('tickets', []))
+
+# --- Custom Commands ---
+@app.route('/api/commands', methods=['GET'])
+def get_commands():
+    return jsonify(load_json('custom_commands.json'))
+
+@app.route('/api/commands', methods=['POST'])
+def post_command():
+    data = request.json
+    cmds = load_json('custom_commands.json')
+    cmds[data['name'].lower()] = data['response']
+    save_json('custom_commands.json', cmds)
+    return jsonify({'success': True})
+
+@app.route('/api/commands/<name>', methods=['DELETE'])
+def delete_command(name):
+    cmds = load_json('custom_commands.json')
+    if name in cmds:
+        del cmds[name]
+        save_json('custom_commands.json', cmds)
+    return jsonify({'success': True})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
