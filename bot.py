@@ -51,7 +51,7 @@ class KPTBot(commands.Bot):
         super().__init__(command_prefix=get_prefix, intents=intents)
 
     async def setup_hook(self):
-        # Sync slash commands globally
+        self.add_view(TicketPanelView())
         await self.tree.sync()
         print('✅ Slash commands synced!')
 
@@ -678,8 +678,214 @@ async def slash_giveaway(interaction: discord.Interaction, minutes: int, winners
     add_log('GIVEAWAY_END', f'Giveaway: {prize} | Winners: {[str(w) for w in winner_list]}', interaction.guild.id)
 
 # ============================================================
-# SHARED TICKET LOGIC
+# TICKET PANEL SYSTEM — Modals + Dropdown
 # ============================================================
+
+TICKET_CATEGORIES = {
+    'general':   {'label': '🙋 General Support',   'slug': 'general',     'color': 0x5865F2},
+    'stream':    {'label': '🔴 Stream Problem',     'slug': 'stream',      'color': 0xFF4466},
+    'report':    {'label': '🚨 Report a Player',    'slug': 'report',      'color': 0xFF9900},
+    'partner':   {'label': '🤝 Partnership',        'slug': 'partnership', 'color': 0x00d4ff},
+    'other':     {'label': '❓ Other',              'slug': 'other',       'color': 0x8892b0},
+}
+
+# ---------- Modals (popup forms) per category ----------
+
+class GeneralModal(discord.ui.Modal, title='🙋 General Support'):
+    issue = discord.ui.TextInput(label='What do you need help with?', style=discord.TextStyle.short, placeholder='Brief summary of your issue...', max_length=100)
+    details = discord.ui.TextInput(label='Please describe in detail', style=discord.TextStyle.long, placeholder='Give us as much info as possible so we can help you faster...', max_length=1000)
+    tried = discord.ui.TextInput(label='What have you already tried?', style=discord.TextStyle.short, placeholder='e.g. Checked FAQ, asked in chat...', required=False, max_length=200)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        fields = {
+            'Issue': str(self.issue),
+            'Details': str(self.details),
+            'Already Tried': str(self.tried) or 'Nothing mentioned',
+        }
+        await _create_ticket_channel(interaction, 'General Support', 'general', fields)
+
+
+class StreamModal(discord.ui.Modal, title='🔴 Stream Problem'):
+    problem = discord.ui.TextInput(label='What is the stream problem?', style=discord.TextStyle.short, placeholder='e.g. Cannot watch stream, buffering, no audio...', max_length=100)
+    platform = discord.ui.TextInput(label='Which platform? (Twitch / YouTube / Other)', style=discord.TextStyle.short, placeholder='e.g. Twitch', max_length=50)
+    device = discord.ui.TextInput(label='What device are you using?', style=discord.TextStyle.short, placeholder='e.g. PC, Phone, Xbox...', max_length=50)
+    details = discord.ui.TextInput(label='Any extra details?', style=discord.TextStyle.long, placeholder='Error messages, screenshots, when it started...', required=False, max_length=500)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        fields = {
+            'Problem': str(self.problem),
+            'Platform': str(self.platform),
+            'Device': str(self.device),
+            'Extra Details': str(self.details) or 'None provided',
+        }
+        await _create_ticket_channel(interaction, 'Stream Problem', 'stream', fields)
+
+
+class ReportModal(discord.ui.Modal, title='🚨 Report a Player'):
+    reported_user = discord.ui.TextInput(label='Username of the player you are reporting', style=discord.TextStyle.short, placeholder='e.g. BadUser#1234', max_length=100)
+    reason = discord.ui.TextInput(label='Reason for report', style=discord.TextStyle.short, placeholder='e.g. Harassment, cheating, spam...', max_length=100)
+    what_happened = discord.ui.TextInput(label='What happened? (full details)', style=discord.TextStyle.long, placeholder='Describe the full situation in detail...', max_length=1000)
+    evidence = discord.ui.TextInput(label='Do you have evidence? (screenshots/links)', style=discord.TextStyle.short, placeholder='Yes / No — attach screenshots in the ticket channel', required=False, max_length=200)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        fields = {
+            'Reported User': str(self.reported_user),
+            'Reason': str(self.reason),
+            'What Happened': str(self.what_happened),
+            'Evidence': str(self.evidence) or 'None mentioned',
+        }
+        await _create_ticket_channel(interaction, 'Report a Player', 'report', fields)
+
+
+class PartnerModal(discord.ui.Modal, title='🤝 Partnership Request'):
+    name = discord.ui.TextInput(label='Your name / brand name', style=discord.TextStyle.short, placeholder='e.g. YourBrand', max_length=100)
+    platform = discord.ui.TextInput(label='Your platform & follower count', style=discord.TextStyle.short, placeholder='e.g. YouTube — 5,000 subs', max_length=100)
+    proposal = discord.ui.TextInput(label='What are you proposing?', style=discord.TextStyle.long, placeholder='Describe what kind of partnership you are looking for...', max_length=1000)
+    links = discord.ui.TextInput(label='Your channel / social links', style=discord.TextStyle.short, placeholder='e.g. youtube.com/yourchannel', max_length=200)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        fields = {
+            'Brand Name': str(self.name),
+            'Platform & Size': str(self.platform),
+            'Proposal': str(self.proposal),
+            'Links': str(self.links),
+        }
+        await _create_ticket_channel(interaction, 'Partnership', 'partner', fields)
+
+
+class OtherModal(discord.ui.Modal, title='❓ Other'):
+    subject = discord.ui.TextInput(label='Subject', style=discord.TextStyle.short, placeholder='Brief subject of your ticket...', max_length=100)
+    details = discord.ui.TextInput(label='Full details', style=discord.TextStyle.long, placeholder='Explain your situation in full detail...', max_length=1000)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        fields = {
+            'Subject': str(self.subject),
+            'Details': str(self.details),
+        }
+        await _create_ticket_channel(interaction, 'Other', 'other', fields)
+
+
+MODAL_MAP = {
+    'general': GeneralModal,
+    'stream':  StreamModal,
+    'report':  ReportModal,
+    'partner': PartnerModal,
+    'other':   OtherModal,
+}
+
+# ---------- Dropdown select ----------
+
+class TicketDropdown(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label='🙋 General Support',  value='general',  description='General questions or server help'),
+            discord.SelectOption(label='🔴 Stream Problem',   value='stream',   description='Issues watching KaramPlaysThis streams'),
+            discord.SelectOption(label='🚨 Report a Player',  value='report',   description='Report a member for rule breaking'),
+            discord.SelectOption(label='🤝 Partnership',      value='partner',  description='Partnership or collab requests'),
+            discord.SelectOption(label='❓ Other',            value='other',    description='Anything else not listed above'),
+        ]
+        super().__init__(placeholder='📂 Select a ticket category...', min_values=1, max_values=1, options=options, custom_id='ticket_dropdown')
+
+    async def callback(self, interaction: discord.Interaction):
+        category = self.values[0]
+        modal_class = MODAL_MAP.get(category)
+        if modal_class:
+            await interaction.response.send_modal(modal_class())
+
+
+class TicketPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketDropdown())
+
+
+# ---------- Core: create the ticket channel ----------
+
+async def _create_ticket_channel(interaction: discord.Interaction, category_name: str, slug: str, fields: dict):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    user = interaction.user
+    settings = load_json('settings.json')
+    tickets = load_json('tickets.json')
+
+    if 'count' not in tickets:
+        tickets['count'] = 0
+    tickets['count'] += 1
+    ticket_num = tickets['count']
+
+    channel_name = f'ticket-{ticket_num:04d}-{slug}'
+    category_id = settings.get('ticket_category')
+    category = guild.get_channel(int(category_id)) if category_id else None
+    support_role_id = settings.get('ticket_support_role')
+    support_role = guild.get_role(int(support_role_id)) if support_role_id else None
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
+        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
+    }
+    if support_role:
+        overwrites[support_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+    for role in guild.roles:
+        if role.permissions.administrator:
+            overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
+    channel = await guild.create_text_channel(
+        channel_name,
+        overwrites=overwrites,
+        category=category,
+        topic=f'Ticket #{ticket_num:04d} | {category_name} | {user}'
+    )
+
+    # Save ticket
+    if 'tickets' not in tickets:
+        tickets['tickets'] = []
+    tickets['tickets'].insert(0, {
+        'id': ticket_num,
+        'user': str(user),
+        'user_id': str(user.id),
+        'category': category_name,
+        'channel': channel_name,
+        'channel_id': str(channel.id),
+        'status': 'open',
+        'time': datetime.datetime.utcnow().isoformat()
+    })
+    save_json('tickets.json', tickets)
+
+    # Build the ticket info embed with all form answers
+    cat_info = TICKET_CATEGORIES.get(slug, {})
+    color = cat_info.get('color', 0x5865F2)
+
+    embed = discord.Embed(
+        title=f'🎫 Ticket #{ticket_num:04d} — {category_name}',
+        color=color,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_author(name=str(user), icon_url=user.display_avatar.url)
+    embed.add_field(name='📋 Category', value=category_name, inline=True)
+    embed.add_field(name='👤 Opened By', value=user.mention, inline=True)
+    embed.add_field(name='\u200b', value='\u200b', inline=True)
+
+    # Add all form answers as fields
+    for label, value in fields.items():
+        embed.add_field(name=f'❯ {label}', value=value[:1024], inline=False)
+
+    embed.set_footer(text='KPT_BOT Ticket System • Support will be with you shortly!')
+
+    # Ticket management buttons
+    btn_view = discord.ui.View(timeout=None)
+    btn_view.add_item(discord.ui.Button(label='🔒 Close Ticket', style=discord.ButtonStyle.danger, custom_id=f'close_{channel.id}'))
+    btn_view.add_item(discord.ui.Button(label='✋ Claim', style=discord.ButtonStyle.secondary, custom_id=f'claim_{channel.id}'))
+
+    mention_str = f'{user.mention}{" " + support_role.mention if support_role else ""}'
+    await channel.send(mention_str, embed=embed, view=btn_view)
+
+    await interaction.followup.send(f'✅ Your ticket has been created: {channel.mention}', ephemeral=True)
+    add_log('TICKET_OPEN', f'{user} opened ticket #{ticket_num:04d}: {category_name}', guild.id)
+    return channel
+
+
+# ---------- Legacy ticket command (kept for ! prefix) ----------
 async def _open_ticket(guild, user, reply_channel, reason):
     settings = load_json('settings.json')
     tickets = load_json('tickets.json')
@@ -707,30 +913,52 @@ async def _open_ticket(guild, user, reply_channel, reason):
     if 'tickets' not in tickets:
         tickets['tickets'] = []
     tickets['tickets'].insert(0, {
-        'id': ticket_num,
-        'user': str(user),
-        'user_id': str(user.id),
-        'reason': reason,
-        'channel': channel_name,
-        'channel_id': str(channel.id),
-        'status': 'open',
-        'time': datetime.datetime.utcnow().isoformat()
+        'id': ticket_num, 'user': str(user), 'user_id': str(user.id),
+        'category': reason, 'channel': channel_name, 'channel_id': str(channel.id),
+        'status': 'open', 'time': datetime.datetime.utcnow().isoformat()
     })
     save_json('tickets.json', tickets)
-    embed = discord.Embed(
-        title=f'🎫 Ticket #{ticket_num:04d}',
-        description=f'**Topic:** {reason}\n**Opened by:** {user.mention}\n\nSupport will be with you shortly!\n\n> Use the buttons below to manage this ticket.',
-        color=0x5865F2,
-        timestamp=datetime.datetime.utcnow()
-    )
+    embed = discord.Embed(title=f'🎫 Ticket #{ticket_num:04d}', description=f'**Topic:** {reason}\n**Opened by:** {user.mention}\n\nSupport will be with you shortly!', color=0x5865F2, timestamp=datetime.datetime.utcnow())
     embed.set_footer(text='KPT_BOT Ticket System')
-    view = discord.ui.View()
+    view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label='🔒 Close Ticket', style=discord.ButtonStyle.danger, custom_id=f'close_{channel.id}'))
     view.add_item(discord.ui.Button(label='✋ Claim', style=discord.ButtonStyle.secondary, custom_id=f'claim_{channel.id}'))
     mention_str = f'{user.mention}{" " + support_role.mention if support_role else ""}'
     await channel.send(mention_str, embed=embed, view=view)
     add_log('TICKET_OPEN', f'{user} opened ticket #{ticket_num:04d}: {reason}', guild.id)
     return channel
+
+
+# ---------- /ticketpanel — post the panel in a channel ----------
+@bot.tree.command(name='ticketpanel', description='Post the ticket panel in this channel')
+async def slash_ticketpanel(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message('❌ Admins only.', ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+
+    embed = discord.Embed(
+        title='🎫 KaramPlaysThis Support',
+        description=(
+            '**Need help? Open a ticket below!**\n\n'
+            '🙋 **General Support** — General questions or server help\n'
+            '🔴 **Stream Problem** — Issues with KaramPlaysThis streams\n'
+            '🚨 **Report a Player** — Report someone breaking the rules\n'
+            '🤝 **Partnership** — Collab or partnership requests\n'
+            '❓ **Other** — Anything else\n\n'
+            '> Select a category from the dropdown below to get started.\n'
+            '> You will be asked a few quick questions before your ticket is created.'
+        ),
+        color=0x5865F2,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text='KPT_BOT Ticket System • One ticket per issue please!')
+    if interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+
+    await interaction.channel.send(embed=embed, view=TicketPanelView())
+    await interaction.followup.send('✅ Ticket panel posted!', ephemeral=True)
+    add_log('TICKET_PANEL', f'{interaction.user} posted ticket panel in #{interaction.channel.name}', interaction.guild.id)
+
 
 # ---------- Run ----------
 bot.run(os.getenv('DISCORD_TOKEN'))
