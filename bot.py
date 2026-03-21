@@ -128,9 +128,25 @@ class KPTBot(commands.Bot):
         super().__init__(command_prefix=get_prefix, intents=intents)
 
     async def setup_hook(self):
-        self.add_view(TicketPanelView())
-        await self.tree.sync()
-        print('✅ Slash commands synced!')
+    self.add_view(TicketPanelView())
+    # Sync globally
+    await self.tree.sync()
+    print('✅ Slash commands synced globally!')
+    
+async def on_ready(self):
+    print(f'✅ Logged in as {self.user}')
+    add_log('BOT_START', f'{self.user} came online')
+    # Force sync to first guild immediately
+    if self.guilds:
+        guild = self.guilds[0]
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        print(f'✅ Force synced to {guild.name}')
+    msgs = get_msgs()
+    status_text = msgs['general'].get('bot_status', 'your server | /help')
+    status_type = msgs['general'].get('status_type', 'watching')
+    type_map = {'watching': discord.ActivityType.watching, 'playing': discord.ActivityType.playing, 'listening': discord.ActivityType.listening, 'competing': discord.ActivityType.competing}
+    await self.change_presence(activity=discord.Activity(type=type_map.get(status_type, discord.ActivityType.watching), name=status_text))
 
     async def on_ready(self):
         print(f'✅ Logged in as {self.user}')
