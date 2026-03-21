@@ -128,31 +128,21 @@ class KPTBot(commands.Bot):
         super().__init__(command_prefix=get_prefix, intents=intents)
 
     async def setup_hook(self):
-    self.add_view(TicketPanelView())
-    # Sync globally
-    await self.tree.sync()
-    print('✅ Slash commands synced globally!')
-    
-async def on_ready(self):
-    print(f'✅ Logged in as {self.user}')
-    add_log('BOT_START', f'{self.user} came online')
-    # Force sync to first guild immediately
-    if self.guilds:
-        guild = self.guilds[0]
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
-        print(f'✅ Force synced to {guild.name}')
-    msgs = get_msgs()
-    status_text = msgs['general'].get('bot_status', 'your server | /help')
-    status_type = msgs['general'].get('status_type', 'watching')
-    type_map = {'watching': discord.ActivityType.watching, 'playing': discord.ActivityType.playing, 'listening': discord.ActivityType.listening, 'competing': discord.ActivityType.competing}
-    await self.change_presence(activity=discord.Activity(type=type_map.get(status_type, discord.ActivityType.watching), name=status_text))
+        self.add_view(TicketPanelView())
+        await self.tree.sync()
+        print('✅ Slash commands synced!')
 
     async def on_ready(self):
         print(f'✅ Logged in as {self.user}')
         add_log('BOT_START', f'{self.user} came online')
         for guild in self.guilds:
             update_server_cache(guild)
+            try:
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                print(f'✅ Force synced to {guild.name}')
+            except Exception as e:
+                print(f'Sync error: {e}')
         msgs = get_msgs()
         status_text = msgs['general'].get('bot_status', 'your server | /help')
         status_type = msgs['general'].get('status_type', 'watching')
@@ -882,17 +872,11 @@ class TicketDropdown(discord.ui.Select):
         cfg = get_panel_config(); cats = cfg.get('categories',[])[:25]
         options = [discord.SelectOption(label=c['label'][:100], value=c['id'], description=c.get('description','')[:100]) for c in cats]
         super().__init__(placeholder=cfg.get('dropdown_placeholder','📂 Select a category...')[:150], min_values=1, max_values=1, options=options, custom_id='ticket_dropdown')
-async def callback(self, interaction: discord.Interaction):
-    cfg = get_panel_config()
-    cats = {c['id']: c for c in cfg.get('categories', [])}
-    category = cats.get(self.values[0])
-    if category:
-        await interaction.response.send_modal(build_modal(category)())
-        self.placeholder = cfg.get('dropdown_placeholder', '📂 Select a ticket category...')
-        for opt in self.options:
-            opt.default = False
-    else:
-        await interaction.response.send_message('❌ Category not found.', ephemeral=True)
+    async def callback(self, interaction: discord.Interaction):
+        cfg = get_panel_config(); cats = {c['id']:c for c in cfg.get('categories',[])}
+        category = cats.get(self.values[0])
+        if category: await interaction.response.send_modal(build_modal(category)())
+        else: await interaction.response.send_message('❌ Category not found.', ephemeral=True)
 
 class TicketPanelView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None); self.add_item(TicketDropdown())
@@ -968,6 +952,21 @@ async def _open_ticket(guild, user, reply_channel, reason):
     add_log('TICKET_OPEN',f'{user} opened ticket #{ticket_num:04d}: {reason}',guild.id)
     return channel
 
+@bot.tree.command(name='ticketpanel', description='Post the ticket panel in this channel')
+async def slash_ticketpanel(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message('❌ Admins only.', ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    cfg = get_panel_config()
+    try: col = int(cfg.get('panel_color','5865F2').lstrip('#'),16)
+    except: col = 0x5865F2
+    embed = discord.Embed(title=cfg.get('panel_title','🎫 Support'), description=cfg.get('panel_description','Open a ticket below!'), color=col, timestamp=datetime.datetime.utcnow())
+    embed.set_footer(text=cfg.get('panel_footer','KPT_BOT Ticket System'))
+    if interaction.guild.icon: embed.set_thumbnail(url=interaction.guild.icon.url)
+    await interaction.channel.send(embed=embed, view=TicketPanelView())
+    await interaction.followup.send('✅ Ticket panel posted!', ephemeral=True)
+    add_log('TICKET_PANEL', f'{interaction.user} posted panel in #{interaction.channel.name}', interaction.guild.id)
+
 # ============================================================
 # PENDING ACTIONS — Dashboard -> Bot bridge (checks every 1s)
 # ============================================================
@@ -1030,44 +1029,5 @@ async def process_pending():
 async def on_ready_tasks():
     if not process_pending.is_running():
         process_pending.start()
-@bot.tree.command(name='ticketpanel', description='Post the ticket panel in this channel')
-async def slash_ticketpanel(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message('❌ Admins only.', ephemeral=True)
-    await interaction.response.defer(ephemeral=True)
-    cfg = get_panel_config()
-    try:
-        col = int(cfg.get('panel_color','5865F2').lstrip('#'),16)
-    except:
-        col = 0x5865F2
-    embed = discord.Embed(
-        title=cfg.get('panel_title','🎫 Support'),
-        description=cfg.get('panel_description','Open a ticket below!'),
-        color=col,
-        timestamp=datetime.datetime.utcnow()
-    )
-    embed.set_footer(text=cfg.get('panel_footer','KPT_BOT Ticket System'))
-    if interaction.guild.icon:
-        embed.set_thumbnail(url=interaction.guild.icon.url)
-    await interaction.channel.send(embed=embed, view=TicketPanelView())
-    await interaction.followup.send('✅ Ticket panel posted!', ephemeral=True)
-    add_log('TICKET_PANEL', f'{interaction.user} posted panel in #{interaction.channel.name}', interaction.guild.id)
-        return await interaction.response.send_message('❌ Admins only.', ephemeral=True)
-    await interaction.response.defer(ephemeral=True)
-    cfg = get_panel_config()
-    try: col = int(cfg.get('panel_color','5865F2').lstrip('#'),16)
-    except: col=0x5865F2
-    embed = discord.Embed(
-        title=cfg.get('panel_title','🎫 Support'),
-        description=cfg.get('panel_description','Open a ticket below!'),
-        color=col,
-        timestamp=datetime.datetime.utcnow()
-    )
-    embed.set_footer(text=cfg.get('panel_footer','KPT_BOT Ticket System'))
-    if interaction.guild.icon:
-        embed.set_thumbnail(url=interaction.guild.icon.url)
-    await interaction.channel.send(embed=embed, view=TicketPanelView())
-    await interaction.followup.send('✅ Ticket panel posted!', ephemeral=True)
-    add_log('TICKET_PANEL', f'{interaction.user} posted ticket panel in #{interaction.channel.name}', interaction.guild.id)
-bot.run(os.getenv('DISCORD_TOKEN'))
 
+bot.run(os.getenv('DISCORD_TOKEN'))
