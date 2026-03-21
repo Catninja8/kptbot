@@ -866,11 +866,17 @@ class TicketDropdown(discord.ui.Select):
         cfg = get_panel_config(); cats = cfg.get('categories',[])[:25]
         options = [discord.SelectOption(label=c['label'][:100], value=c['id'], description=c.get('description','')[:100]) for c in cats]
         super().__init__(placeholder=cfg.get('dropdown_placeholder','📂 Select a category...')[:150], min_values=1, max_values=1, options=options, custom_id='ticket_dropdown')
-    async def callback(self, interaction: discord.Interaction):
-        cfg = get_panel_config(); cats = {c['id']:c for c in cfg.get('categories',[])}
-        category = cats.get(self.values[0])
-        if category: await interaction.response.send_modal(build_modal(category)())
-        else: await interaction.response.send_message('❌ Category not found.', ephemeral=True)
+async def callback(self, interaction: discord.Interaction):
+    cfg = get_panel_config()
+    cats = {c['id']: c for c in cfg.get('categories', [])}
+    category = cats.get(self.values[0])
+    if category:
+        await interaction.response.send_modal(build_modal(category)())
+        self.placeholder = cfg.get('dropdown_placeholder', '📂 Select a ticket category...')
+        for opt in self.options:
+            opt.default = False
+    else:
+        await interaction.response.send_message('❌ Category not found.', ephemeral=True)
 
 class TicketPanelView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None); self.add_item(TicketDropdown())
