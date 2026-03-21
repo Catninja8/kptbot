@@ -288,24 +288,23 @@ async def on_interaction(interaction: discord.Interaction):
 
     if cid.startswith('close_'):
         settings = load_json('settings.json')
-        ticket_role_id = settings.get('ticket_support_role')
+        ticket_view_roles = settings.get('ticket_view_roles', [])
         can_close = interaction.user.guild_permissions.administrator
-        if not can_close and ticket_role_id:
-            can_close = any(str(r.id) == str(ticket_role_id) for r in interaction.user.roles)
+        if not can_close:
+            can_close = any(str(r.id) in [str(x) for x in ticket_view_roles] for r in interaction.user.roles)
         if not can_close and str(interaction.user.id) in (interaction.channel.topic or ''):
             can_close = True
         if not can_close:
             return await interaction.response.send_message(m('tickets','close_perms'), ephemeral=True)
-        # Show reason modal
         modal = CloseTicketModal(channel_id=str(interaction.channel.id))
         await interaction.response.send_modal(modal)
 
     elif cid.startswith('claim_'):
         settings = load_json('settings.json')
-        ticket_role_id = settings.get('ticket_support_role')
+        ticket_view_roles = settings.get('ticket_view_roles', [])
         can_claim = interaction.user.guild_permissions.administrator
-        if not can_claim and ticket_role_id:
-            can_claim = any(str(r.id) == str(ticket_role_id) for r in interaction.user.roles)
+        if not can_claim:
+            can_claim = any(str(r.id) in [str(x) for x in ticket_view_roles] for r in interaction.user.roles)
         if not can_claim:
             return await interaction.response.send_message(m('tickets','claim_perms'), ephemeral=True)
         await interaction.response.send_message(embed=discord.Embed(description=m('tickets','claim_msg',user=interaction.user.mention), color=0x00FF88))
@@ -770,10 +769,10 @@ async def slash_closeticket(interaction: discord.Interaction):
     if 'ticket-' not in interaction.channel.name:
         return await interaction.response.send_message(m('tickets','not_ticket_channel'), ephemeral=True)
     settings = load_json('settings.json')
-    ticket_role_id = settings.get('ticket_support_role')
+    ticket_view_roles = settings.get('ticket_view_roles', [])
     can_close = interaction.user.guild_permissions.administrator
-    if not can_close and ticket_role_id:
-        can_close = any(str(r.id) == str(ticket_role_id) for r in interaction.user.roles)
+    if not can_close:
+        can_close = any(str(r.id) in [str(x) for x in ticket_view_roles] for r in interaction.user.roles)
     if not can_close and str(interaction.user.id) in (interaction.channel.topic or ''):
         can_close = True
     if not can_close:
@@ -885,18 +884,19 @@ async def _create_ticket_channel(interaction, category_name, slug, fields, color
     channel_name = f'ticket-{ticket_num:04d}-{slug[:15]}'
     category_id = settings.get('ticket_category')
     category = guild.get_channel(int(category_id)) if category_id else None
-    support_role_id = settings.get('ticket_support_role')
-    support_role = guild.get_role(int(support_role_id)) if support_role_id else None
-    # Extra viewer roles
-    extra_roles = settings.get('ticket_viewer_roles', [])
+    ticket_view_roles = settings.get('ticket_view_roles', [])
     overwrites = {guild.default_role:discord.PermissionOverwrite(read_messages=False), user:discord.PermissionOverwrite(read_messages=True,send_messages=True,attach_files=True), guild.me:discord.PermissionOverwrite(read_messages=True,send_messages=True,manage_channels=True)}
-    if support_role: overwrites[support_role]=discord.PermissionOverwrite(read_messages=True,send_messages=True)
-    for rid in extra_roles:
+    # Give access to all ticket viewer roles
+    role_mentions = []
+    for rid in ticket_view_roles:
         role = guild.get_role(int(rid))
-        if role: overwrites[role]=discord.PermissionOverwrite(read_messages=True,send_messages=True)
+        if role:
+            overwrites[role] = discord.PermissionOverwrite(read_messages=True,send_messages=True)
+            role_mentions.append(role.mention)
+    # Admins always get access
     for role in guild.roles:
         if role.permissions.administrator: overwrites[role]=discord.PermissionOverwrite(read_messages=True,send_messages=True)
-    channel = await guild.create_text_channel(channel_name, overwrites=overwrites, category=category, topic=f'Ticket #{ticket_num:04d} | {category_name} | {user}')
+    channel = await guild.create_text_channel(channel_name, overwrites=overwrites, category=category, topic=f'Ticket #{ticket_num:04d} | {category_name} | {user.id} | {user}')
     if 'tickets' not in tickets: tickets['tickets']=[]
     tickets['tickets'].insert(0,{'id':ticket_num,'user':str(user),'user_id':str(user.id),'category':category_name,'channel':channel_name,'channel_id':str(channel.id),'status':'open','time':datetime.datetime.utcnow().isoformat()})
     save_json('tickets.json', tickets)
@@ -910,7 +910,8 @@ async def _create_ticket_channel(interaction, category_name, slug, fields, color
     btn_view = discord.ui.View(timeout=None)
     btn_view.add_item(discord.ui.Button(label='🔒 Close Ticket',style=discord.ButtonStyle.danger,custom_id=f'close_{channel.id}'))
     btn_view.add_item(discord.ui.Button(label='✋ Claim',style=discord.ButtonStyle.secondary,custom_id=f'claim_{channel.id}'))
-    await channel.send(f'{user.mention}{" "+support_role.mention if support_role else ""}', embed=embed, view=btn_view)
+    mention_str = user.mention + (' ' + ' '.join(role_mentions) if role_mentions else '')
+    await channel.send(mention_str, embed=embed, view=btn_view)
     await interaction.followup.send(m('tickets','open_confirm',channel=channel.mention), ephemeral=True)
     add_log('TICKET_OPEN', f'{user} opened ticket #{ticket_num:04d}: {category_name}', guild.id)
     return channel
@@ -921,16 +922,17 @@ async def _open_ticket(guild, user, reply_channel, reason):
     tickets['count']+=1; ticket_num=tickets['count']
     channel_name=f'ticket-{ticket_num:04d}-{reason.lower().replace(" ","-")[:15]}'
     category_id=settings.get('ticket_category'); category=guild.get_channel(int(category_id)) if category_id else None
-    support_role_id=settings.get('ticket_support_role'); support_role=guild.get_role(int(support_role_id)) if support_role_id else None
-    extra_roles = settings.get('ticket_viewer_roles', [])
+    ticket_view_roles = settings.get('ticket_view_roles', [])
     overwrites={guild.default_role:discord.PermissionOverwrite(read_messages=False),user:discord.PermissionOverwrite(read_messages=True,send_messages=True,attach_files=True),guild.me:discord.PermissionOverwrite(read_messages=True,send_messages=True,manage_channels=True)}
-    if support_role: overwrites[support_role]=discord.PermissionOverwrite(read_messages=True,send_messages=True)
-    for rid in extra_roles:
+    role_mentions = []
+    for rid in ticket_view_roles:
         role = guild.get_role(int(rid))
-        if role: overwrites[role]=discord.PermissionOverwrite(read_messages=True,send_messages=True)
+        if role:
+            overwrites[role]=discord.PermissionOverwrite(read_messages=True,send_messages=True)
+            role_mentions.append(role.mention)
     for role in guild.roles:
         if role.permissions.administrator: overwrites[role]=discord.PermissionOverwrite(read_messages=True,send_messages=True)
-    channel=await guild.create_text_channel(channel_name,overwrites=overwrites,category=category,topic=f'Ticket #{ticket_num:04d} | {user} | {reason}')
+    channel=await guild.create_text_channel(channel_name,overwrites=overwrites,category=category,topic=f'Ticket #{ticket_num:04d} | {user.id} | {user} | {reason}')
     if 'tickets' not in tickets: tickets['tickets']=[]
     tickets['tickets'].insert(0,{'id':ticket_num,'user':str(user),'user_id':str(user.id),'category':reason,'channel':channel_name,'channel_id':str(channel.id),'status':'open','time':datetime.datetime.utcnow().isoformat()})
     save_json('tickets.json',tickets)
@@ -939,7 +941,8 @@ async def _open_ticket(guild, user, reply_channel, reason):
     view=discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label='🔒 Close Ticket',style=discord.ButtonStyle.danger,custom_id=f'close_{channel.id}'))
     view.add_item(discord.ui.Button(label='✋ Claim',style=discord.ButtonStyle.secondary,custom_id=f'claim_{channel.id}'))
-    await channel.send(f'{user.mention}{" "+support_role.mention if support_role else ""}',embed=embed,view=view)
+    mention_str = str(user.mention) + (' ' + ' '.join(role_mentions) if role_mentions else '')
+    await channel.send(mention_str,embed=embed,view=view)
     add_log('TICKET_OPEN',f'{user} opened ticket #{ticket_num:04d}: {reason}',guild.id)
     return channel
 
