@@ -127,6 +127,11 @@ code{background:var(--accent-dim);border:1px solid rgba(88,101,242,0.2);color:va
     <a class="nav-item" onclick="nav('settings',this)"><span class="nicon">⚙️</span>Settings</a>
     <a class="nav-item" onclick="nav('cmdlist',this)"><span class="nicon">📖</span>Command List</a>
   </nav>
+
+  <div style="padding:12px 16px;border-top:1px solid #1e2438;margin-top:auto;">
+    <div style="font-size:10px;color:#3d4666;text-align:center;margin-bottom:8px;letter-spacing:1px;">SIGNED IN AS ADMIN</div>
+    <button onclick="window.location.href='/logout'" style="width:100%;padding:10px;background:rgba(255,68,102,0.08);border:1px solid rgba(255,68,102,0.2);border-radius:8px;color:#ff4466;font-family:Rajdhani,sans-serif;font-weight:700;font-size:12px;cursor:pointer;letter-spacing:1px;text-transform:uppercase;">🚪 Logout</button>
+  </div>
 </aside>
 <main class="main">
 
@@ -357,7 +362,7 @@ function LP(id){const m={overview:loadOV,logs:()=>loadLogs('all-logs',200),autom
 function timeAgo(iso){const d=new Date(iso+(iso.endsWith('Z')?'':'Z'));const s=Math.floor((Date.now()-d)/1000);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return d.toLocaleDateString();}
 function RL(l){return`<div class="lr ${l.action}"><span class="lt">${l.action}</span><span class="ld">${l.details}</span><span class="lti">${timeAgo(l.timestamp)}</span></div>`;}
 function toast(msg,err=false){const t=document.createElement('div');t.className='toast'+(err?' err':'');t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),3500);}
-async function A(url,method='GET',body=null){const o={method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);return(await fetch(url,o)).json();}
+async function A(url,method='GET',body=null){const o={method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);const r=await fetch(url,o);if(r.status===401){window.location.href='/login';return{};}return r.json();}
 function H(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 // OVERVIEW

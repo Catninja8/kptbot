@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KPT_BOT — Login</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#080a10;color:#e2e8f8;font-family:'JetBrains Mono',monospace;min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(88,101,242,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(88,101,242,0.03) 1px,transparent 1px);background-size:32px 32px;pointer-events:none;}
+
+/* Animated background orbs */
+.orb{position:fixed;border-radius:50%;filter:blur(80px);opacity:0.15;animation:float 8s ease-in-out infinite;}
+.orb1{width:400px;height:400px;background:#5865F2;top:-100px;left:-100px;animation-delay:0s;}
+.orb2{width:300px;height:300px;background:#00d4ff;bottom:-50px;right:-50px;animation-delay:3s;}
+.orb3{width:200px;height:200px;background:#a855f7;top:50%;left:50%;animation-delay:1.5s;}
+@keyframes float{0%,100%{transform:translateY(0) scale(1);}50%{transform:translateY(-30px) scale(1.05);}}
+
+.container{position:relative;z-index:1;width:100%;max-width:420px;padding:20px;}
+
+.logo-section{text-align:center;margin-bottom:40px;}
+.logo-icon{width:72px;height:72px;background:linear-gradient(135deg,#5865F2,#00d4ff);border-radius:20px;display:flex;align-items:center;justify-content:center;font-size:36px;margin:0 auto 16px;box-shadow:0 0 40px rgba(88,101,242,0.4);animation:glow 2s ease-in-out infinite;}
+@keyframes glow{0%,100%{box-shadow:0 0 40px rgba(88,101,242,0.4);}50%{box-shadow:0 0 60px rgba(88,101,242,0.7);}}
+.logo-name{font-family:'Rajdhani',sans-serif;font-size:32px;font-weight:700;letter-spacing:4px;background:linear-gradient(135deg,#e2e8f8,#00d4ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.logo-sub{font-size:11px;color:#8892b0;letter-spacing:2px;text-transform:uppercase;margin-top:4px;}
+
+.card{background:rgba(14,16,24,0.9);border:1px solid #1e2438;border-radius:16px;padding:32px;backdrop-filter:blur(20px);box-shadow:0 25px 50px rgba(0,0,0,0.5);}
+
+.card-title{font-family:'Rajdhani',sans-serif;font-size:20px;font-weight:700;letter-spacing:2px;color:#e2e8f8;margin-bottom:6px;}
+.card-sub{font-size:11px;color:#8892b0;margin-bottom:28px;}
+
+.fg{margin-bottom:20px;}
+.fl{display:block;font-size:10px;color:#8892b0;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;}
+.fi{width:100%;background:#141720;border:1px solid #1e2438;border-radius:10px;padding:12px 16px;color:#e2e8f8;font-family:'JetBrains Mono',monospace;font-size:14px;outline:none;transition:all 0.2s;}
+.fi:focus{border-color:#5865F2;box-shadow:0 0 0 3px rgba(88,101,242,0.15);}
+.fi::placeholder{color:#3d4666;}
+
+.btn-login{width:100%;padding:14px;background:linear-gradient(135deg,#5865F2,#4752d0);color:white;border:none;border-radius:10px;font-family:'Rajdhani',sans-serif;font-size:16px;font-weight:700;letter-spacing:2px;cursor:pointer;transition:all 0.2s;text-transform:uppercase;position:relative;overflow:hidden;}
+.btn-login:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(88,101,242,0.4);}
+.btn-login:active{transform:translateY(0);}
+.btn-login.loading{pointer-events:none;opacity:0.7;}
+
+.error{background:rgba(255,68,102,0.1);border:1px solid rgba(255,68,102,0.3);border-radius:8px;padding:10px 14px;font-size:12px;color:#ff4466;margin-bottom:20px;display:flex;align-items:center;gap:8px;}
+
+.divider{display:flex;align-items:center;gap:12px;margin:24px 0;color:#3d4666;font-size:11px;}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:#1e2438;}
+
+.security-note{text-align:center;font-size:10px;color:#3d4666;margin-top:20px;line-height:1.6;}
+.security-note span{color:#5865F2;}
+</style>
+</head>
+<body>
+<div class="orb orb1"></div>
+<div class="orb orb2"></div>
+<div class="orb orb3"></div>
+
+<div class="container">
+  <div class="logo-section">
+    <div class="logo-icon">⚡</div>
+    <div class="logo-name">KPT_BOT</div>
+    <div class="logo-sub">Dashboard Portal</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Welcome Back</div>
+    <div class="card-sub">Sign in to access your bot dashboard</div>
+
+    <div id="error-box" class="error" style="display:none;">
+      <span>⚠️</span><span id="error-msg">Invalid username or password</span>
+    </div>
+
+    <div class="fg">
+      <label class="fl">Username</label>
+      <input class="fi" type="text" id="username" placeholder="Enter username..." autocomplete="username">
+    </div>
+    <div class="fg">
+      <label class="fl">Password</label>
+      <input class="fi" type="password" id="password" placeholder="Enter password..." autocomplete="current-password">
+    </div>
+
+    <button class="btn-login" id="login-btn" onclick="doLogin()">🔐 Sign In</button>
+
+    <div class="security-note">
+      🔒 <span>Protected</span> — Only authorised users can access this dashboard.<br>
+      All actions are logged and monitored.
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+async function doLogin() {
+  const btn = document.getElementById('login-btn');
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value.trim();
+  const errBox = document.getElementById('error-box');
+  const errMsg = document.getElementById('error-msg');
+
+  if (!username || !password) {
+    errMsg.textContent = 'Please enter both username and password';
+    errBox.style.display = 'flex';
+    return;
+  }
+
+  btn.textContent = '⏳ Signing in...';
+  btn.classList.add('loading');
+  errBox.style.display = 'none';
+
+  try {
+    const r = await fetch('/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await r.json();
+    if (data.success) {
+      btn.textContent = '✅ Success!';
+      setTimeout(() => window.location.href = '/', 500);
+    } else {
+      errMsg.textContent = data.error || 'Invalid username or password';
+      errBox.style.display = 'flex';
+      btn.textContent = '🔐 Sign In';
+      btn.classList.remove('loading');
+      document.getElementById('password').value = '';
+    }
+  } catch (e) {
+    errMsg.textContent = 'Connection error — please try again';
+    errBox.style.display = 'flex';
+    btn.textContent = '🔐 Sign In';
+    btn.classList.remove('loading');
+  }
+}
+</script>
+</body>
+</html>
