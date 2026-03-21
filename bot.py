@@ -1036,6 +1036,25 @@ async def slash_ticketpanel(interaction: discord.Interaction):
         return await interaction.response.send_message('❌ Admins only.', ephemeral=True)
     await interaction.response.defer(ephemeral=True)
     cfg = get_panel_config()
+    try:
+        col = int(cfg.get('panel_color','5865F2').lstrip('#'),16)
+    except:
+        col = 0x5865F2
+    embed = discord.Embed(
+        title=cfg.get('panel_title','🎫 Support'),
+        description=cfg.get('panel_description','Open a ticket below!'),
+        color=col,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=cfg.get('panel_footer','KPT_BOT Ticket System'))
+    if interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+    await interaction.channel.send(embed=embed, view=TicketPanelView())
+    await interaction.followup.send('✅ Ticket panel posted!', ephemeral=True)
+    add_log('TICKET_PANEL', f'{interaction.user} posted panel in #{interaction.channel.name}', interaction.guild.id)
+        return await interaction.response.send_message('❌ Admins only.', ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    cfg = get_panel_config()
     try: col = int(cfg.get('panel_color','5865F2').lstrip('#'),16)
     except: col=0x5865F2
     embed = discord.Embed(
