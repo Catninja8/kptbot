@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 import json, os, datetime
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='.')
 DATA_DIR = 'data'
 
 def load_json(path):
