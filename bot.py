@@ -127,12 +127,10 @@ class KPTBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix=get_prefix, intents=intents)
 
-   async def setup_hook(self):
+ async def setup_hook(self):
     self.add_view(TicketPanelView())
-    # Clear all commands then re-sync
-    self.tree.clear_commands(guild=None)
     await self.tree.sync()
-    print('✅ Commands cleared and resynced!')
+    print('✅ Slash commands synced!')
     async def on_ready(self):
         print(f'✅ Logged in as {self.user}')
         add_log('BOT_START', f'{self.user} came online')
