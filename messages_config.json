@@ -1,0 +1,65 @@
+{
+  "colors": {
+    "kick": "FF4466",
+    "ban": "FF0000",
+    "mute": "FFCC00",
+    "unmute": "00FF88",
+    "warn": "FF9900",
+    "purge": "00d4ff",
+    "giveaway": "00FF88",
+    "announce": "00d4ff",
+    "ticket": "5865F2",
+    "welcome": "5865F2",
+    "leave": "FF4466",
+    "autorole": "00FF88"
+  },
+  "moderation": {
+    "kick_title": "👢 Member Kicked",
+    "kick_dm": "You have been kicked from {server}. Reason: {reason}",
+    "ban_title": "🔨 Member Banned",
+    "ban_dm": "You have been banned from {server}. Reason: {reason}",
+    "mute_title": "🔇 Member Muted",
+    "unmute_title": "🔊 Member Unmuted",
+    "unmute_msg": "🔊 **{user}** has been unmuted.",
+    "warn_title": "⚠️ Member Warned",
+    "purge_msg": "🧹 Deleted {amount} messages.",
+    "no_permission": "❌ You don't have permission to use this command.",
+    "member_not_found": "❌ Member not found.",
+    "missing_argument": "❌ Missing argument: `{arg}`"
+  },
+  "tickets": {
+    "open_confirm": "✅ Your ticket has been created: {channel}",
+    "close_countdown": "🔒 Ticket closing in 5 seconds...",
+    "claim_msg": "✋ Ticket claimed by {user}",
+    "ticket_footer": "KPT_BOT Ticket System • Support will be with you shortly!",
+    "not_ticket_channel": "❌ This is not a ticket channel.",
+    "close_perms": "❌ Only staff can close tickets.",
+    "claim_perms": "❌ Only staff can claim tickets."
+  },
+  "giveaway": {
+    "title": "🎉 GIVEAWAY 🎉",
+    "enter_instruction": "React with 🎉 to enter!",
+    "end_title": "🎉 Giveaway Ended!",
+    "no_entries": "🎉 Giveaway ended but nobody entered!",
+    "winners_msg": "Congratulations {winners}! You won **{prize}**! 🎉",
+    "footer": "Hosted by {host}"
+  },
+  "automod": {
+    "badword_msg": "⚠️ {user} watch your language!",
+    "caps_msg": "⚠️ {user} please don't use excessive caps!",
+    "link_msg": "⚠️ {user} links are not allowed here!"
+  },
+  "welcome": {
+    "author_text": "Welcome to {server}!"
+  },
+  "roles": {
+    "give_msg": "✅ Gave **{role}** to **{user}**.",
+    "remove_msg": "✅ Removed **{role}** from **{user}**.",
+    "role_not_found": "❌ Role `{role}` not found."
+  },
+  "general": {
+    "ping_msg": "🏓 Pong! `{latency}ms`",
+    "bot_status": "watching your server | /help",
+    "status_type": "watching"
+  }
+}
