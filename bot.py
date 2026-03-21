@@ -57,23 +57,61 @@ def color(key):
 
 # ---------- Server Cache (for dashboard dropdowns) ----------
 def update_server_cache(guild):
-    """Write guild channels and roles to shared data folder for dashboard."""
+    """Write guild channels/roles to shared data folder in Discord order with categories."""
+    # Build grouped channels in exact Discord order
+    grouped = []
+
+    # Uncategorised channels first (no category)
+    uncategorised = [
+        c for c in sorted(guild.channels, key=lambda x: x.position)
+        if c.type in (discord.ChannelType.text, discord.ChannelType.news) and c.category is None
+    ]
+    if uncategorised:
+        grouped.append({
+            'category_id': None,
+            'category_name': '📋 Uncategorised',
+            'channels': [{'id': str(c.id), 'name': c.name} for c in uncategorised]
+        })
+
+    # Categorised channels in category order
+    for cat in sorted(guild.categories, key=lambda x: x.position):
+        channels = [
+            c for c in sorted(cat.channels, key=lambda x: x.position)
+            if c.type in (discord.ChannelType.text, discord.ChannelType.news)
+        ]
+        if channels:
+            grouped.append({
+                'category_id': str(cat.id),
+                'category_name': f'📁 {cat.name.upper()}',
+                'channels': [{'id': str(c.id), 'name': c.name} for c in channels]
+            })
+
+    # Flat channel list for backwards compat
+    flat_channels = []
+    for group in grouped:
+        flat_channels.extend(group['channels'])
+
+    # Roles sorted by position (highest first = most important)
+    roles_sorted = sorted(
+        [r for r in guild.roles if not r.is_default()],
+        key=lambda x: x.position,
+        reverse=True
+    )
+
     cache = {
         'guild_id': str(guild.id),
         'guild_name': guild.name,
         'guild_icon': str(guild.icon.url) if guild.icon else None,
         'member_count': guild.member_count,
-        'channels': [
-            {'id': str(c.id), 'name': c.name, 'type': str(c.type), 'category': str(c.category.name) if c.category else 'No Category'}
-            for c in guild.channels if c.type in (discord.ChannelType.text, discord.ChannelType.news)
-        ],
+        'channels': flat_channels,
+        'channels_grouped': grouped,
         'categories': [
             {'id': str(c.id), 'name': c.name}
-            for c in guild.categories
+            for c in sorted(guild.categories, key=lambda x: x.position)
         ],
         'roles': [
-            {'id': str(r.id), 'name': r.name, 'color': str(r.color), 'mentionable': r.mentionable, 'position': r.position}
-            for r in guild.roles if not r.is_default()
+            {'id': str(r.id), 'name': r.name, 'color': str(r.color), 'position': r.position}
+            for r in roles_sorted
         ],
         'updated': datetime.datetime.utcnow().isoformat()
     }
