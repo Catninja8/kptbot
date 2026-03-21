@@ -285,6 +285,7 @@ async def on_command_error(ctx, error):
 async def on_interaction(interaction: discord.Interaction):
     if not interaction.data or 'custom_id' not in interaction.data: return
     cid = interaction.data['custom_id']
+
     if cid.startswith('close_'):
         settings = load_json('settings.json')
         ticket_role_id = settings.get('ticket_support_role')
@@ -295,14 +296,10 @@ async def on_interaction(interaction: discord.Interaction):
             can_close = True
         if not can_close:
             return await interaction.response.send_message(m('tickets','close_perms'), ephemeral=True)
-        await interaction.response.send_message(embed=discord.Embed(description=m('tickets','close_countdown'), color=0xFF4466))
-        tickets = load_json('tickets.json')
-        for t in tickets.get('tickets',[]):
-            if t.get('channel_id')==str(interaction.channel.id): t['status']='closed'
-        save_json('tickets.json', tickets)
-        add_log('TICKET_CLOSE', f'{interaction.user} closed {interaction.channel.name}', interaction.guild.id)
-        await asyncio.sleep(5)
-        await interaction.channel.delete()
+        # Show reason modal
+        modal = CloseTicketModal(channel_id=str(interaction.channel.id))
+        await interaction.response.send_modal(modal)
+
     elif cid.startswith('claim_'):
         settings = load_json('settings.json')
         ticket_role_id = settings.get('ticket_support_role')
@@ -313,6 +310,74 @@ async def on_interaction(interaction: discord.Interaction):
             return await interaction.response.send_message(m('tickets','claim_perms'), ephemeral=True)
         await interaction.response.send_message(embed=discord.Embed(description=m('tickets','claim_msg',user=interaction.user.mention), color=0x00FF88))
         add_log('TICKET_CLAIM', f'{interaction.user} claimed {interaction.channel.name}', interaction.guild.id)
+
+
+# ---------- Close Ticket Modal ----------
+class CloseTicketModal(discord.ui.Modal, title='🔒 Close Ticket'):
+    def __init__(self, channel_id: str):
+        super().__init__()
+        self.channel_id = channel_id
+
+    reason = discord.ui.TextInput(
+        label='Why are you closing this ticket?',
+        placeholder='e.g. Issue resolved, No response, Spam...',
+        style=discord.TextStyle.long,
+        required=True,
+        max_length=500
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        close_reason = str(self.reason)
+        channel = interaction.channel
+
+        # Find the ticket opener from saved data
+        tickets = load_json('tickets.json')
+        opener_id = None
+        for t in tickets.get('tickets', []):
+            if t.get('channel_id') == str(channel.id):
+                t['status'] = 'closed'
+                t['close_reason'] = close_reason
+                t['closed_by'] = str(interaction.user)
+                opener_id = t.get('user_id')
+                break
+        save_json('tickets.json', tickets)
+
+        # Send close message in ticket channel
+        embed = discord.Embed(
+            title='🔒 Ticket Closed',
+            color=0xFF4466,
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.add_field(name='Closed by', value=interaction.user.mention, inline=True)
+        embed.add_field(name='Reason', value=close_reason, inline=False)
+        embed.set_footer(text='This channel will be deleted in 5 seconds')
+        await interaction.response.send_message(embed=embed)
+
+        # DM the ticket opener
+        if opener_id:
+            try:
+                opener = await interaction.client.fetch_user(int(opener_id))
+                dm_embed = discord.Embed(
+                    title='🎫 Your Ticket Has Been Closed',
+                    description=(
+                        f'Your ticket in **{interaction.guild.name}** has been closed.\n\n'
+                        f'**Closed by:** {interaction.user}\n'
+                        f'**Reason:** {close_reason}\n\n'
+                        f'> If you believe this was a false close, please open a new ticket and mention this reason.'
+                    ),
+                    color=0xFF4466,
+                    timestamp=datetime.datetime.utcnow()
+                )
+                dm_embed.set_footer(text=f'KPT_BOT • {interaction.guild.name}')
+                if interaction.guild.icon:
+                    dm_embed.set_thumbnail(url=interaction.guild.icon.url)
+                await opener.send(embed=dm_embed)
+            except Exception as e:
+                print(f'Could not DM ticket opener: {e}')
+
+        add_log('TICKET_CLOSE', f'{interaction.user} closed {channel.name} | Reason: {close_reason}', interaction.guild.id)
+        await asyncio.sleep(5)
+        await channel.delete()
 
 # ============================================================
 # PREFIX COMMANDS
@@ -487,13 +552,9 @@ async def ticket(ctx, *, reason='General Support'):
 @bot.command()
 async def closeticket(ctx):
     if 'ticket-' not in ctx.channel.name: return await ctx.send(m('tickets','not_ticket_channel'))
-    await ctx.send(m('tickets','close_countdown'))
-    tickets = load_json('tickets.json')
-    for t in tickets.get('tickets',[]):
-        if t.get('channel_id')==str(ctx.channel.id): t['status']='closed'
-    save_json('tickets.json', tickets)
-    add_log('TICKET_CLOSE', f'{ctx.author} closed {ctx.channel.name}', ctx.guild.id)
-    await asyncio.sleep(5); await ctx.channel.delete()
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label='🔒 Close Ticket', style=discord.ButtonStyle.danger, custom_id=f'close_{ctx.channel.id}'))
+    await ctx.send('Click below to close this ticket — you will be asked for a reason.', view=view)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -659,22 +720,65 @@ async def slash_purge(interaction: discord.Interaction, amount: int):
     add_log('PURGE', f'{interaction.user} purged {amount} in #{interaction.channel.name}', interaction.guild.id)
 
 @bot.tree.command(name='ticket', description='Open a support ticket')
-@app_commands.describe(reason='What do you need help with?')
-async def slash_ticket(interaction: discord.Interaction, reason: str='General Support'):
-    await interaction.response.defer(ephemeral=True)
-    channel = await _open_ticket(interaction.guild, interaction.user, None, reason)
-    await interaction.followup.send(m('tickets','open_confirm',channel=channel.mention), ephemeral=True)
+async def slash_ticket(interaction: discord.Interaction):
+    """Shows a dropdown to pick ticket category — no panel needed."""
+    cfg = get_panel_config()
+    cats = cfg.get('categories', [])[:25]
+    if not cats:
+        await interaction.response.defer(ephemeral=True)
+        channel = await _open_ticket(interaction.guild, interaction.user, None, 'General Support')
+        await interaction.followup.send(m('tickets','open_confirm',channel=channel.mention), ephemeral=True)
+        return
+
+    # Build ephemeral dropdown view
+    options = [
+        discord.SelectOption(
+            label=c['label'][:100],
+            value=c['id'],
+            description=c.get('description','')[:100]
+        ) for c in cats
+    ]
+
+    class TicketSelectView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=60)
+
+        @discord.ui.select(
+            placeholder=cfg.get('dropdown_placeholder', '📂 Select a ticket category...'),
+            min_values=1, max_values=1,
+            options=options
+        )
+        async def select_callback(self, interaction2: discord.Interaction, select: discord.ui.Select):
+            cat_id = select.values[0]
+            cats_map = {c['id']: c for c in cats}
+            category = cats_map.get(cat_id)
+            if category:
+                await interaction2.response.send_modal(build_modal(category)())
+            else:
+                await interaction2.response.send_message('❌ Category not found.', ephemeral=True)
+
+    embed = discord.Embed(
+        title='🎫 Open a Support Ticket',
+        description='Select a category below that best describes your issue.\nYou will then be asked a few quick questions.',
+        color=0x5865F2
+    )
+    embed.set_footer(text='KPT_BOT Ticket System')
+    await interaction.response.send_message(embed=embed, view=TicketSelectView(), ephemeral=True)
 
 @bot.tree.command(name='closeticket', description='Close the current ticket channel')
 async def slash_closeticket(interaction: discord.Interaction):
-    if 'ticket-' not in interaction.channel.name: return await interaction.response.send_message(m('tickets','not_ticket_channel'), ephemeral=True)
-    await interaction.response.send_message(m('tickets','close_countdown'))
-    tickets = load_json('tickets.json')
-    for t in tickets.get('tickets',[]):
-        if t.get('channel_id')==str(interaction.channel.id): t['status']='closed'
-    save_json('tickets.json', tickets)
-    add_log('TICKET_CLOSE', f'{interaction.user} closed {interaction.channel.name}', interaction.guild.id)
-    await asyncio.sleep(5); await interaction.channel.delete()
+    if 'ticket-' not in interaction.channel.name:
+        return await interaction.response.send_message(m('tickets','not_ticket_channel'), ephemeral=True)
+    settings = load_json('settings.json')
+    ticket_role_id = settings.get('ticket_support_role')
+    can_close = interaction.user.guild_permissions.administrator
+    if not can_close and ticket_role_id:
+        can_close = any(str(r.id) == str(ticket_role_id) for r in interaction.user.roles)
+    if not can_close and str(interaction.user.id) in (interaction.channel.topic or ''):
+        can_close = True
+    if not can_close:
+        return await interaction.response.send_message(m('tickets','close_perms'), ephemeral=True)
+    await interaction.response.send_modal(CloseTicketModal(channel_id=str(interaction.channel.id)))
 
 @bot.tree.command(name='giverole', description='Give a role to a member')
 @app_commands.describe(member='The member', role='The role to give')
@@ -901,25 +1005,6 @@ async def process_pending():
 async def on_ready_tasks():
     if not process_pending.is_running():
         process_pending.start()
-@bot.tree.command(name='ticketpanel', description='Post the ticket panel in this channel')
-async def slash_ticketpanel(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message('❌ Admins only.', ephemeral=True)
-    await interaction.response.defer(ephemeral=True)
-    cfg = get_panel_config()
-    try: col = int(cfg.get('panel_color','5865F2').lstrip('#'),16)
-    except: col=0x5865F2
-    embed = discord.Embed(
-        title=cfg.get('panel_title','🎫 Support'),
-        description=cfg.get('panel_description','Open a ticket below!'),
-        color=col,
-        timestamp=datetime.datetime.utcnow()
-    )
-    embed.set_footer(text=cfg.get('panel_footer','KPT_BOT Ticket System'))
-    if interaction.guild.icon:
-        embed.set_thumbnail(url=interaction.guild.icon.url)
-    await interaction.channel.send(embed=embed, view=TicketPanelView())
-    await interaction.followup.send('✅ Ticket panel posted!', ephemeral=True)
-    add_log('TICKET_PANEL', f'{interaction.user} posted ticket panel in #{interaction.channel.name}', interaction.guild.id)
+
 bot.run(os.getenv('DISCORD_TOKEN'))
 
