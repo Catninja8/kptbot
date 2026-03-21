@@ -839,18 +839,68 @@ async def _open_ticket(guild, user, reply_channel, reason):
     add_log('TICKET_OPEN',f'{user} opened ticket #{ticket_num:04d}: {reason}',guild.id)
     return channel
 
-@bot.tree.command(name='ticketpanel', description='Post the ticket panel in this channel')
-async def slash_ticketpanel(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator: return await interaction.response.send_message('❌ Admins only.', ephemeral=True)
-    await interaction.response.defer(ephemeral=True)
-    cfg = get_panel_config()
-    try: col = int(cfg.get('panel_color','5865F2').lstrip('#'),16)
-    except: col=0x5865F2
-    embed=discord.Embed(title=cfg.get('panel_title','🎫 Support'),description=cfg.get('panel_description','Open a ticket below!'),color=col,timestamp=datetime.datetime.utcnow())
-    embed.set_footer(text=cfg.get('panel_footer','KPT_BOT Ticket System'))
-    if interaction.guild.icon: embed.set_thumbnail(url=interaction.guild.icon.url)
-    await interaction.channel.send(embed=embed, view=TicketPanelView())
-    await interaction.followup.send('✅ Ticket panel posted!', ephemeral=True)
-    add_log('TICKET_PANEL', f'{interaction.user} posted ticket panel in #{interaction.channel.name}', interaction.guild.id)
+# ============================================================
+# PENDING ACTIONS — Dashboard -> Bot bridge (checks every 1s)
+# ============================================================
+from discord.ext import tasks
+
+@tasks.loop(seconds=1)
+async def process_pending():
+    pending = load_json('pending_actions.json')
+    actions = pending.get('actions', [])
+    if not actions: return
+    remaining = []
+    for action in actions:
+        try:
+            atype = action.get('type')
+            data = action.get('data', {})
+            guild = bot.guilds[0] if bot.guilds else None
+            if not guild: remaining.append(action); continue
+            if atype == 'announce':
+                ch = guild.get_channel(int(data.get('channel_id', 0)))
+                if ch:
+                    embed = discord.Embed(description=data.get('message',''), color=color('announce'), timestamp=datetime.datetime.utcnow())
+                    embed.set_author(name='📢 Announcement', icon_url=guild.icon.url if guild.icon else None)
+                    embed.set_footer(text='Posted via Dashboard')
+                    await ch.send(embed=embed)
+                    add_log('ANNOUNCE', f'Dashboard posted in #{ch.name}', guild.id)
+            elif atype == 'giveaway':
+                ch = guild.get_channel(int(data.get('channel_id', 0)))
+                if ch:
+                    minutes = int(data.get('minutes', 60))
+                    winners = int(data.get('winners', 1))
+                    prize = data.get('prize', 'Prize')
+                    end_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
+                    gm = get_msgs()['giveaway']
+                    embed = discord.Embed(title=gm.get('title','🎉 GIVEAWAY 🎉'), description=f'**Prize:** {prize}\n**Winners:** {winners}\n**Ends:** <t:{int(end_time.timestamp())}:R>\n\n{gm.get("enter_instruction","React with 🎉 to enter!")}', color=color('giveaway'), timestamp=end_time)
+                    embed.set_footer(text=gm.get('footer','Hosted by {host}').replace('{host}','Dashboard'))
+                    msg = await ch.send(embed=embed)
+                    await msg.add_reaction('🎉')
+                    gws = load_json('giveaways.json')
+                    if 'active' not in gws: gws['active'] = []
+                    gws['active'].append({'message_id':str(msg.id),'channel_id':str(ch.id),'prize':prize,'winners':winners,'host':'Dashboard','end_time':end_time.isoformat(),'status':'active'})
+                    save_json('giveaways.json', gws)
+                    add_log('GIVEAWAY_START', f'Dashboard started: {prize}', guild.id)
+            elif atype == 'ticketpanel':
+                ch = guild.get_channel(int(data.get('channel_id', 0)))
+                if ch:
+                    cfg = get_panel_config()
+                    try: col = int(cfg.get('panel_color','5865F2').lstrip('#'),16)
+                    except: col = 0x5865F2
+                    embed = discord.Embed(title=cfg.get('panel_title','🎫 Support'), description=cfg.get('panel_description','Open a ticket below!'), color=col, timestamp=datetime.datetime.utcnow())
+                    embed.set_footer(text=cfg.get('panel_footer','KPT_BOT Ticket System'))
+                    if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+                    await ch.send(embed=embed, view=TicketPanelView())
+                    add_log('TICKET_PANEL', f'Dashboard posted panel in #{ch.name}', guild.id)
+        except Exception as e:
+            print(f'Pending action error: {e}')
+    pending['actions'] = remaining
+    save_json('pending_actions.json', pending)
+
+@bot.event
+async def on_ready_tasks():
+    if not process_pending.is_running():
+        process_pending.start()
 
 bot.run(os.getenv('DISCORD_TOKEN'))
+
