@@ -234,6 +234,23 @@ def reset_messages():
     save_json('messages_config.json', {})
     return jsonify({'success': True})
 
+@app.route('/api/notify', methods=['GET'])
+@require_auth
+def get_notify():
+    cfg = load_json('notify_settings.json')
+    return jsonify(cfg if cfg else {})
+
+@app.route('/api/notify', methods=['POST'])
+@require_auth
+def save_notify():
+    data = request.json
+    cfg = load_json('notify_settings.json')
+    # Preserve last_youtube_video and last_twitch_status
+    data['last_youtube_video'] = cfg.get('last_youtube_video', '')
+    data['last_twitch_status'] = cfg.get('last_twitch_status', False)
+    save_json('notify_settings.json', data)
+    return jsonify({'success': True})
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

@@ -143,6 +143,9 @@ class KPTBot(commands.Bot):
                 print(f'✅ Force synced to {guild.name}')
             except Exception as e:
                 print(f'Sync error: {e}')
+        if not check_notifications.is_running(): check_notifications.start()
+        if not check_twitch_live.is_running(): check_twitch_live.start()
+        if not process_pending.is_running(): process_pending.start()
         msgs = get_msgs()
         status_text = msgs['general'].get('bot_status', 'your server | /help')
         status_type = msgs['general'].get('status_type', 'watching')
@@ -612,8 +615,36 @@ async def warnings(ctx, member: discord.Member):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def clearwarns(ctx, member: discord.Member):
-    warns = load_json('warns.json'); warns[str(member.id)]=[]
-    save_json('warns.json', warns); await ctx.send(f'✅ Cleared all warnings for **{member}**.')
+    warns = load_json('warns.json')
+    count = len(warns.get(str(member.id), []))
+    warns[str(member.id)] = []
+    save_json('warns.json', warns)
+    embed = discord.Embed(title='✅ Warnings Cleared', color=color('unmute'), timestamp=datetime.datetime.utcnow())
+    embed.add_field(name='User', value=str(member))
+    embed.add_field(name='Warnings Removed', value=str(count))
+    embed.add_field(name='Moderator', value=str(ctx.author))
+    await ctx.send(embed=embed)
+    add_log('CLEARWARNS', f'{ctx.author} cleared {count} warns for {member}', ctx.guild.id)
+
+@bot.command()
+@commands.has_permissions(kick_members=True)
+async def clearwarn(ctx, member: discord.Member, index: int):
+    """Remove a specific warning by number e.g. !clearwarn @user 2"""
+    warns = load_json('warns.json')
+    uid = str(member.id)
+    user_warns = warns.get(uid, [])
+    if not user_warns: return await ctx.send(f'✅ **{member}** has no warnings.')
+    if index < 1 or index > len(user_warns): return await ctx.send(f'❌ Invalid warning number. They have {len(user_warns)} warning(s).')
+    removed = user_warns.pop(index - 1)
+    warns[uid] = user_warns
+    save_json('warns.json', warns)
+    embed = discord.Embed(title='✅ Warning Removed', color=color('unmute'), timestamp=datetime.datetime.utcnow())
+    embed.add_field(name='User', value=str(member))
+    embed.add_field(name='Removed Warn #', value=str(index))
+    embed.add_field(name='Reason was', value=removed.get('reason','Unknown'))
+    embed.add_field(name='Remaining Warns', value=str(len(user_warns)))
+    await ctx.send(embed=embed)
+    add_log('CLEARWARN', f'{ctx.author} removed warn #{index} from {member}', ctx.guild.id)
 
 @bot.command()
 @commands.has_permissions(manage_messages=True)
@@ -843,6 +874,43 @@ async def slash_warnings(interaction: discord.Interaction, member: discord.Membe
     embed = discord.Embed(title=f'⚠️ Warnings for {member}', color=color('warn'))
     for i,w in enumerate(user_warns,1): embed.add_field(name=f'Warn #{i}', value=f"Reason: {w['reason']}\nBy: {w['by']}", inline=False)
     await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name='clearwarns', description='Clear ALL warnings for a member')
+@app_commands.describe(member='The member to clear warns for')
+async def slash_clearwarns(interaction: discord.Interaction, member: discord.Member):
+    if not interaction.user.guild_permissions.administrator: return await interaction.response.send_message(m('moderation','no_permission'), ephemeral=True)
+    await interaction.response.defer()
+    warns = load_json('warns.json')
+    count = len(warns.get(str(member.id), []))
+    warns[str(member.id)] = []
+    save_json('warns.json', warns)
+    embed = discord.Embed(title='✅ Warnings Cleared', color=color('unmute'), timestamp=datetime.datetime.utcnow())
+    embed.add_field(name='User', value=str(member))
+    embed.add_field(name='Warnings Removed', value=str(count))
+    embed.add_field(name='Moderator', value=str(interaction.user))
+    await interaction.followup.send(embed=embed)
+    add_log('CLEARWARNS', f'{interaction.user} cleared {count} warns for {member}', interaction.guild.id)
+
+@bot.tree.command(name='clearwarn', description='Remove a specific warning by number')
+@app_commands.describe(member='The member', number='Warning number to remove e.g. 2')
+async def slash_clearwarn(interaction: discord.Interaction, member: discord.Member, number: int):
+    if not interaction.user.guild_permissions.kick_members: return await interaction.response.send_message(m('moderation','no_permission'), ephemeral=True)
+    await interaction.response.defer()
+    warns = load_json('warns.json')
+    uid = str(member.id)
+    user_warns = warns.get(uid, [])
+    if not user_warns: return await interaction.followup.send(f'✅ **{member}** has no warnings.')
+    if number < 1 or number > len(user_warns): return await interaction.followup.send(f'❌ Invalid number. They have {len(user_warns)} warning(s).')
+    removed = user_warns.pop(number - 1)
+    warns[uid] = user_warns
+    save_json('warns.json', warns)
+    embed = discord.Embed(title='✅ Warning Removed', color=color('unmute'), timestamp=datetime.datetime.utcnow())
+    embed.add_field(name='User', value=str(member))
+    embed.add_field(name='Removed Warn #', value=str(number))
+    embed.add_field(name='Reason was', value=removed.get('reason','Unknown'))
+    embed.add_field(name='Remaining Warns', value=str(len(user_warns)))
+    await interaction.followup.send(embed=embed)
+    add_log('CLEARWARN', f'{interaction.user} removed warn #{number} from {member}', interaction.guild.id)
 
 @bot.tree.command(name='purge', description='Delete a number of messages')
 @app_commands.describe(amount='Number of messages to delete')
@@ -1162,6 +1230,130 @@ async def process_pending():
 async def on_ready_tasks():
     if not process_pending.is_running():
         process_pending.start()
+
+
+# ============================================================
+# YOUTUBE & TWITCH ANNOUNCEMENTS
+# ============================================================
+DEFAULT_NOTIFY = {
+    'youtube_enabled': False,
+    'youtube_channel_id': '',
+    'youtube_announce_channel': '',
+    'youtube_message': '🎥 **{streamer}** just uploaded a new video!\n\n**{title}**\n{url}\n\n@everyone',
+    'twitch_enabled': False,
+    'twitch_username': '',
+    'twitch_announce_channel': '',
+    'twitch_message': '🔴 **{streamer}** is now LIVE on Twitch!\n\n**{title}**\n{url}\n\n@everyone',
+    'last_youtube_video': '',
+    'last_twitch_status': False
+}
+
+def get_notify_settings():
+    s = load_json('notify_settings.json')
+    if not s:
+        save_json('notify_settings.json', DEFAULT_NOTIFY)
+        return DEFAULT_NOTIFY
+    merged = dict(DEFAULT_NOTIFY)
+    merged.update(s)
+    return merged
+
+async def check_youtube(guild):
+    import urllib.request, json as _j
+    ns = get_notify_settings()
+    if not ns.get('youtube_enabled'): return
+    yt_id = ns.get('youtube_channel_id','').strip()
+    announce_ch_id = ns.get('youtube_announce_channel','').strip()
+    if not yt_id or not announce_ch_id: return
+    channel = guild.get_channel(int(announce_ch_id))
+    if not channel: return
+    try:
+        # Use RSS feed — no API key needed
+        url = f'https://www.youtube.com/feeds/videos.xml?channel_id={yt_id}'
+        req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = r.read().decode()
+        import re
+        # Get latest video id and title from RSS
+        vid_match = re.search(r'<yt:videoId>(.*?)</yt:videoId>', data)
+        title_match = re.search(r'<title>(.*?)</title>', data)
+        author_match = re.search(r'<name>(.*?)</name>', data)
+        if not vid_match: return
+        video_id = vid_match.group(1)
+        title = title_match.group(1) if title_match else 'New Video'
+        author = author_match.group(1) if author_match else 'KaramPlaysThis'
+        # Skip first result which is the channel title
+        all_titles = re.findall(r'<title>(.*?)</title>', data)
+        title = all_titles[1] if len(all_titles) > 1 else 'New Video'
+        if video_id == ns.get('last_youtube_video',''): return
+        # New video!
+        ns['last_youtube_video'] = video_id
+        save_json('notify_settings.json', ns)
+        video_url = f'https://www.youtube.com/watch?v={video_id}'
+        msg = ns.get('youtube_message', DEFAULT_NOTIFY['youtube_message'])
+        msg = msg.replace('{title}', title).replace('{url}', video_url).replace('{streamer}', author).replace('{video_id}', video_id)
+        embed = discord.Embed(title=f'🎥 {title}', url=video_url, color=0xFF0000, timestamp=datetime.datetime.utcnow())
+        embed.set_author(name=author, url=f'https://www.youtube.com/channel/{yt_id}')
+        embed.set_thumbnail(url=f'https://img.youtube.com/vi/{video_id}/maxresdefault.jpg')
+        embed.set_footer(text='YouTube • New Upload')
+        await channel.send('@everyone', embed=embed)
+        add_log('YOUTUBE', f'New video: {title}', guild.id)
+    except Exception as e:
+        print(f'YouTube check error: {e}')
+
+async def check_twitch(guild):
+    import urllib.request, json as _j
+    ns = get_notify_settings()
+    if not ns.get('twitch_enabled'): return
+    twitch_user = ns.get('twitch_username','').strip()
+    announce_ch_id = ns.get('twitch_announce_channel','').strip()
+    client_id = os.getenv('TWITCH_CLIENT_ID','')
+    client_secret = os.getenv('TWITCH_CLIENT_SECRET','')
+    if not twitch_user or not announce_ch_id or not client_id or not client_secret: return
+    channel = guild.get_channel(int(announce_ch_id))
+    if not channel: return
+    try:
+        # Get OAuth token
+        token_data = _j.dumps({'client_id':client_id,'client_secret':client_secret,'grant_type':'client_credentials'}).encode()
+        req = urllib.request.Request('https://id.twitch.tv/oauth2/token', data=token_data, headers={'Content-Type':'application/json'}, method='POST')
+        with urllib.request.urlopen(req, timeout=10) as r:
+            token = _j.loads(r.read())['access_token']
+        # Check stream status
+        stream_url = f'https://api.twitch.tv/helix/streams?user_login={twitch_user}'
+        req2 = urllib.request.Request(stream_url, headers={'Client-ID':client_id,'Authorization':f'Bearer {token}'})
+        with urllib.request.urlopen(req2, timeout=10) as r:
+            stream_data = _j.loads(r.read())
+        streams = stream_data.get('data', [])
+        is_live = len(streams) > 0
+        was_live = ns.get('last_twitch_status', False)
+        if is_live and not was_live:
+            # Just went live!
+            stream = streams[0]
+            title = stream.get('title', 'Live Stream')
+            ns['last_twitch_status'] = True
+            save_json('notify_settings.json', ns)
+            twitch_url = f'https://twitch.tv/{twitch_user}'
+            msg = ns.get('twitch_message', DEFAULT_NOTIFY['twitch_message'])
+            msg = msg.replace('{title}', title).replace('{url}', twitch_url).replace('{streamer}', twitch_user)
+            embed = discord.Embed(title=f'🔴 {title}', url=twitch_url, color=0x9146FF, timestamp=datetime.datetime.utcnow())
+            embed.set_author(name=twitch_user, url=twitch_url)
+            embed.set_footer(text='Twitch • Now Live')
+            await channel.send('@everyone', embed=embed)
+            add_log('TWITCH_LIVE', f'{twitch_user} went live: {title}', guild.id)
+        elif not is_live and was_live:
+            ns['last_twitch_status'] = False
+            save_json('notify_settings.json', ns)
+    except Exception as e:
+        print(f'Twitch check error: {e}')
+
+@tasks.loop(minutes=2)
+async def check_notifications():
+    for guild in bot.guilds:
+        await check_youtube(guild)
+
+@tasks.loop(minutes=3)
+async def check_twitch_live():
+    for guild in bot.guilds:
+        await check_twitch(guild)
 
 bot.run(os.getenv('DISCORD_TOKEN'))
 
