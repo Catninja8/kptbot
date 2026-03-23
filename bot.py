@@ -1355,5 +1355,5 @@ async def check_twitch_live():
     for guild in bot.guilds:
         await check_twitch(guild)
 
-bot.run(os.getenv('DISCORD_TOKEN'))
+bot.run("PASTE_YOUR_TOKEN_HERE")
 
